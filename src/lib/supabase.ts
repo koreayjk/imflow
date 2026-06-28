@@ -13,3 +13,10 @@ if (!supabaseUrl || !supabaseAnonKey) {
 }
 
 export const supabase = createClient(supabaseUrl ?? '', supabaseAnonKey ?? '');
+
+// 이 Supabase 프로젝트에는 다른 앱이 함께 있어서, 충돌을 피하려고
+// 모든 테이블에 `imflow_` 접두사를 사용합니다. (supabase/schema.sql 과 일치)
+export const TABLES = {
+  projects: 'imflow_projects',
+  tasks: 'imflow_tasks',
+} as const;

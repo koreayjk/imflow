@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Plus, FolderPlus } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import { supabase, TABLES } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { Project } from '../types';
 import Layout from '../components/Layout';
@@ -25,7 +25,7 @@ export default function DashboardPage() {
     setLoading(true);
 
     const { data: projectData } = await supabase
-      .from('projects')
+      .from(TABLES.projects)
       .select('*')
       .eq('user_id', user.id)
       .order('created_at', { ascending: false });
@@ -35,7 +35,7 @@ export default function DashboardPage() {
 
     if (list.length > 0) {
       const { data: taskData } = await supabase
-        .from('tasks')
+        .from(TABLES.tasks)
         .select('project_id, is_completed')
         .in(
           'project_id',

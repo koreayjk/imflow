@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ChevronLeft, Calendar, Trash2, Check } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import { supabase, TABLES } from '../lib/supabase';
 import { Project, Task, StageKey } from '../types';
 import { STAGES, STAGE_KEYS, nextStage } from '../lib/constants';
 import { formatKoreanDate, getDDay } from '../lib/date';
@@ -29,7 +29,7 @@ export default function ProjectDetailPage() {
     setLoading(true);
 
     const { data: projectData, error } = await supabase
-      .from('projects')
+      .from(TABLES.projects)
       .select('*')
       .eq('id', id)
       .single();
@@ -42,7 +42,7 @@ export default function ProjectDetailPage() {
     setProject(projectData as Project);
 
     const { data: taskData } = await supabase
-      .from('tasks')
+      .from(TABLES.tasks)
       .select('*')
       .eq('project_id', id)
       .order('created_at', { ascending: true });
@@ -59,14 +59,14 @@ export default function ProjectDetailPage() {
   const changeStatus = async (status: StageKey) => {
     if (!project || project.status === status) return;
     setProject({ ...project, status }); // 낙관적 업데이트
-    await supabase.from('projects').update({ status }).eq('id', project.id);
+    await supabase.from(TABLES.projects).update({ status }).eq('id', project.id);
   };
 
   // --- 프로젝트 삭제 ---
   const deleteProject = async () => {
     if (!project) return;
     if (!window.confirm('이 프로젝트와 모든 할일이 삭제됩니다. 계속할까요?')) return;
-    await supabase.from('projects').delete().eq('id', project.id);
+    await supabase.from(TABLES.projects).delete().eq('id', project.id);
     navigate('/', { replace: true });
   };
 
@@ -74,7 +74,7 @@ export default function ProjectDetailPage() {
   const addTask = async (stage: StageKey, title: string) => {
     if (!project) return;
     const { data } = await supabase
-      .from('tasks')
+      .from(TABLES.tasks)
       .insert({ project_id: project.id, stage, title })
       .select()
       .single();
@@ -84,7 +84,7 @@ export default function ProjectDetailPage() {
   const toggleTask = async (task: Task) => {
     const updated = { ...task, is_completed: !task.is_completed };
     setTasks((prev) => prev.map((t) => (t.id === task.id ? updated : t)));
-    await supabase.from('tasks').update({ is_completed: updated.is_completed }).eq('id', task.id);
+    await supabase.from(TABLES.tasks).update({ is_completed: updated.is_completed }).eq('id', task.id);
   };
 
   const moveTask = async (task: Task) => {
@@ -92,12 +92,12 @@ export default function ProjectDetailPage() {
     if (!next) return;
     const updated = { ...task, stage: next };
     setTasks((prev) => prev.map((t) => (t.id === task.id ? updated : t)));
-    await supabase.from('tasks').update({ stage: next }).eq('id', task.id);
+    await supabase.from(TABLES.tasks).update({ stage: next }).eq('id', task.id);
   };
 
   const deleteTask = async (task: Task) => {
     setTasks((prev) => prev.filter((t) => t.id !== task.id));
-    await supabase.from('tasks').delete().eq('id', task.id);
+    await supabase.from(TABLES.tasks).delete().eq('id', task.id);
   };
 
   if (loading) {

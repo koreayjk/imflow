@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { X, Loader2 } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import { supabase, TABLES } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { Project } from '../types';
 
@@ -24,7 +24,7 @@ export default function NewProjectModal({ onClose, onCreated }: NewProjectModalP
     setSaving(true);
 
     const { data, error: err } = await supabase
-      .from('projects')
+      .from(TABLES.projects)
       .insert({
         user_id: user.id,
         name: name.trim(),
