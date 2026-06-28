@@ -7,6 +7,9 @@ import {
   Loader2,
   CalendarClock,
   CheckCircle2,
+  List,
+  LayoutGrid,
+  BarChart3,
 } from 'lucide-react';
 import { supabase, TABLES } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
@@ -17,6 +20,8 @@ import Layout from '../components/Layout';
 import Spinner from '../components/Spinner';
 import StatCard from '../components/StatCard';
 import ProjectCard from '../components/ProjectCard';
+import ProjectBoard from '../components/ProjectBoard';
+import DashboardInsights from '../components/DashboardInsights';
 import NewProjectModal from '../components/NewProjectModal';
 
 interface TaskCount {
@@ -26,6 +31,13 @@ interface TaskCount {
 
 type StatusFilter = 'all' | StageKey;
 type SortKey = 'recent' | 'deadline' | 'name';
+type ViewKey = 'list' | 'board' | 'insights';
+
+const VIEWS: { key: ViewKey; label: string; icon: typeof List }[] = [
+  { key: 'list', label: '목록', icon: List },
+  { key: 'board', label: '보드', icon: LayoutGrid },
+  { key: 'insights', label: '분석', icon: BarChart3 },
+];
 
 const SORTS: { key: SortKey; label: string }[] = [
   { key: 'recent', label: '최신순' },
@@ -40,7 +52,8 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
 
-  // 검색 / 필터 / 정렬
+  // 뷰 / 검색 / 필터 / 정렬
+  const [view, setView] = useState<ViewKey>('list');
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState<StatusFilter>('all');
   const [sort, setSort] = useState<SortKey>('recent');
@@ -178,61 +191,87 @@ export default function DashboardPage() {
             />
           </div>
 
-          {/* 검색 / 필터 / 정렬 */}
-          <div className="mb-4 space-y-3">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="프로젝트 이름·설명 검색"
-                className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
-              />
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <FilterChip active={status === 'all'} onClick={() => setStatus('all')}>
-                전체
-              </FilterChip>
-              {STAGES.map((s) => (
-                <FilterChip
-                  key={s.key}
-                  active={status === s.key}
-                  onClick={() => setStatus(s.key)}
-                >
-                  <span className={`h-1.5 w-1.5 rounded-full ${s.dot}`} />
-                  {s.label}
-                </FilterChip>
-              ))}
-
-              <select
-                value={sort}
-                onChange={(e) => setSort(e.target.value as SortKey)}
-                className="ml-auto rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 outline-none transition focus:border-brand-400"
+          {/* 뷰 전환 탭 */}
+          <div className="mb-4 inline-flex rounded-xl border border-slate-200 bg-white p-1">
+            {VIEWS.map((v) => (
+              <button
+                key={v.key}
+                onClick={() => setView(v.key)}
+                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition ${
+                  view === v.key
+                    ? 'bg-brand-600 text-white shadow-card'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
               >
-                {SORTS.map((s) => (
-                  <option key={s.key} value={s.key}>
-                    {s.label}
-                  </option>
-                ))}
-              </select>
-            </div>
+                <v.icon className="h-4 w-4" />
+                {v.label}
+              </button>
+            ))}
           </div>
 
-          {/* 목록 */}
-          {visible.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-slate-300 bg-white py-12 text-center text-sm text-slate-500">
-              조건에 맞는 프로젝트가 없어요.
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 gap-4">
-              {visible.map((p) => {
-                const c = counts[p.id] ?? { done: 0, total: 0 };
-                return <ProjectCard key={p.id} project={p} done={c.done} total={c.total} />;
-              })}
-            </div>
+          {view === 'list' && (
+            <>
+              {/* 검색 / 필터 / 정렬 */}
+              <div className="mb-4 space-y-3">
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="프로젝트 이름·설명 검색"
+                    className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
+                  />
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <FilterChip active={status === 'all'} onClick={() => setStatus('all')}>
+                    전체
+                  </FilterChip>
+                  {STAGES.map((s) => (
+                    <FilterChip
+                      key={s.key}
+                      active={status === s.key}
+                      onClick={() => setStatus(s.key)}
+                    >
+                      <span className={`h-1.5 w-1.5 rounded-full ${s.dot}`} />
+                      {s.label}
+                    </FilterChip>
+                  ))}
+
+                  <select
+                    value={sort}
+                    onChange={(e) => setSort(e.target.value as SortKey)}
+                    className="ml-auto rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 outline-none transition focus:border-brand-400"
+                  >
+                    {SORTS.map((s) => (
+                      <option key={s.key} value={s.key}>
+                        {s.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* 목록 */}
+              {visible.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-slate-300 bg-white py-12 text-center text-sm text-slate-500">
+                  조건에 맞는 프로젝트가 없어요.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-4">
+                  {visible.map((p) => {
+                    const c = counts[p.id] ?? { done: 0, total: 0 };
+                    return <ProjectCard key={p.id} project={p} done={c.done} total={c.total} />;
+                  })}
+                </div>
+              )}
+            </>
           )}
+
+          {view === 'board' && <ProjectBoard projects={projects} counts={counts} />}
+
+          {view === 'insights' && <DashboardInsights projects={projects} counts={counts} />}
         </>
       )}
 
