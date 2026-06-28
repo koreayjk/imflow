@@ -1,46 +1,103 @@
-# Getting Started with Create React App
+# IM Flow
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+한국 소상공인을 위한 프로젝트 관리 SaaS. React + TypeScript + Supabase 로 만들었습니다.
 
-## Available Scripts
+## 주요 기능 (MVP)
 
-In the project directory, you can run:
+- 📧 이메일 로그인 / 회원가입 (Supabase Auth)
+- 📁 프로젝트 생성 (이름 · 설명 · 마감일)
+- 🔄 프로젝트 단계 관리 (준비 → 진행 → 검토 → 완료)
+- ✅ 각 단계별 할일 추가 / 완료 / 다음 단계 이동 / 삭제
+- 📊 대시보드에서 전체 프로젝트 진행률 한눈에 보기
+- 📱 모바일 퍼스트, 한국어 UI
 
-### `npm start`
+## 기술 스택
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in the browser.
+- React 19 + TypeScript (Create React App)
+- React Router v7
+- Supabase (Auth + PostgreSQL + RLS)
+- Tailwind CSS v3
+- lucide-react (아이콘)
 
-The page will reload if you make edits.\
-You will also see any lint errors in the console.
+## 시작하기
 
-### `npm test`
+### 1. 의존성 설치
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+```bash
+npm install
+```
 
-### `npm run build`
+> 참고: 이 프로젝트는 CRA 와 호환되는 **Tailwind CSS v3** 를 사용합니다.
+> (`tailwindcss@3`, `postcss`, `autoprefixer` — `package.json` 에 이미 반영되어 있습니다.)
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+### 2. Supabase 설정
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+1. [supabase.com](https://supabase.com) 에서 프로젝트를 생성합니다.
+2. 대시보드 > **SQL Editor** 에 [`supabase/schema.sql`](./supabase/schema.sql) 내용을 붙여넣고 실행합니다.
+   (테이블 · 인덱스 · RLS 정책이 모두 생성됩니다.)
+3. **Project Settings > API** 에서 `Project URL` 과 `anon public` 키를 복사합니다.
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+### 3. 환경변수
 
-### `npm run eject`
+```bash
+cp .env.example .env.local
+```
 
-**Note: this is a one-way operation. Once you `eject`, you can’t go back!**
+`.env.local` 을 열어 값을 채웁니다:
 
-If you aren’t satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+```
+REACT_APP_SUPABASE_URL=https://your-project-ref.supabase.co
+REACT_APP_SUPABASE_ANON_KEY=your-anon-public-key
+```
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you’re on your own.
+### 4. 실행
 
-You don’t have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn’t feel obligated to use this feature. However we understand that this tool wouldn’t be useful if you couldn’t customize it when you are ready for it.
+```bash
+npm start
+```
 
-## Learn More
+[http://localhost:3000](http://localhost:3000) 에서 확인할 수 있습니다.
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+## 폴더 구조
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+```
+src/
+├─ components/        # 재사용 UI
+│  ├─ AuthForm.tsx        로그인/회원가입 공용 폼
+│  ├─ Layout.tsx          상단바 + 본문 래퍼
+│  ├─ ProtectedRoute.tsx  인증 가드
+│  ├─ ProjectCard.tsx     대시보드 프로젝트 카드
+│  ├─ NewProjectModal.tsx 새 프로젝트 모달
+│  ├─ StageColumn.tsx     단계별 할일 컬럼
+│  ├─ StageBadge.tsx      단계 배지
+│  ├─ TaskItem.tsx        할일 한 줄
+│  ├─ ProgressBar.tsx     진행률 바
+│  └─ Spinner.tsx         로딩 표시
+├─ contexts/
+│  └─ AuthContext.tsx     세션/로그인/로그아웃 상태
+├─ lib/
+│  ├─ supabase.ts         Supabase 클라이언트
+│  ├─ constants.ts        단계(STAGES) 정의
+│  └─ date.ts             날짜 · D-Day 헬퍼
+├─ pages/
+│  ├─ LoginPage.tsx
+│  ├─ SignupPage.tsx
+│  ├─ DashboardPage.tsx
+│  └─ ProjectDetailPage.tsx
+├─ types/
+│  └─ index.ts            Project / Task 타입
+├─ App.tsx               라우팅
+└─ index.tsx             진입점
+
+supabase/
+└─ schema.sql            DB 스키마 + RLS
+```
+
+## 데이터 모델
+
+| 테이블     | 설명                                                              |
+| ---------- | ----------------------------------------------------------------- |
+| `projects` | 프로젝트. `status` 로 현재 단계 관리, `user_id` 로 소유자 구분     |
+| `tasks`    | 할일. `project_id` 로 프로젝트에 속하고 `stage` 로 단계 구분       |
+
+모든 테이블에 RLS 가 적용되어 **각 사용자는 자신의 데이터만** 조회·수정할 수 있습니다.
