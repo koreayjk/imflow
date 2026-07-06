@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>IM Flow · 소상공인 프로젝트 관리</title>
+  <meta name="description" content="IM Flow · 한국 소상공인을 위한 프로젝트 관리" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    if (window.tailwind) tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50:'#eef4ff',100:'#d9e6ff',200:'#bcd3ff',300:'#8eb6ff',400:'#598dff',
+              500:'#3b6bf6',600:'#244eeb',700:'#1d3dd8',800:'#1e34af',900:'#1e328a'
+            }
+          },
+          fontFamily: { sans: ['Pretendard','-apple-system','BlinkMacSystemFont','system-ui','sans-serif'] }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
+    ::-webkit-scrollbar { height: 8px; width: 8px; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 8px; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900">
+  <div id="app"></div>
+  <div id="modal-root"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ---------- 상수 ----------
+  var STAGES = [
+    { key:'preparing',   label:'준비', dot:'bg-slate-400',   badge:'bg-slate-100 text-slate-700' },
+    { key:'in_progress', label:'진행', dot:'bg-brand-500',   badge:'bg-brand-100 text-brand-700' },
+    { key:'review',      label:'검토', dot:'bg-amber-500',   badge:'bg-amber-100 text-amber-700' },
+    { key:'done',        label:'완료', dot:'bg-emerald-500', badge:'bg-emerald-100 text-emerald-700' }
+  ];
+  var STAGE_KEYS = STAGES.map(function (s) { return s.key; });
+  function stageMeta(key){ return STAGES.filter(function(s){return s.key===key;})[0] || STAGES[0]; }
+  function nextStage(key){ var i=STAGE_KEYS.indexOf(key); return (i>=0 && i<STAGE_KEYS.length-1) ? STAGE_KEYS[i+1] : null; }
+
+  // ---------- 저장소 ----------
+  var STORE_KEY = 'imflow_data_v1';
+  var data = load();
+  function load(){
+    try { var raw = localStorage.getItem(STORE_KEY); if(raw) return JSON.parse(raw); } catch(e){}
+    return { projects: [], tasks: [] };
+  }
+  function save(){ try { localStorage.setItem(STORE_KEY, JSON.stringify(data)); } catch(e){} }
+  function uid(){ return 'id-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2,8); }
+
+  // ---------- 화면 상태 ----------
+  var state = {
+    view: 'dashboard',        // 'dashboard' | 'project'
+    projectId: null,
+    tab: 'list',              // 'list' | 'board' | 'insights'
+    query: '', status: 'all', sort: 'recent'
+  };
+
+  // ---------- 헬퍼 ----------
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  }); }
+
+  function formatKoreanDate(str){
+    if(!str) return '마감일 없음';
+    var d = new Date(str + 'T00:00:00');
+    if(isNaN(d.getTime())) return '마감일 없음';
+    return d.getFullYear()+'년 '+(d.getMonth()+1)+'월 '+d.getDate()+'일';
+  }
+  function getDDay(str){
+    if(!str) return null;
+    var t = new Date(str + 'T00:00:00'); if(isNaN(t.getTime())) return null;
+    var today = new Date(); today.setHours(0,0,0,0);
+    var diff = Math.round((t.getTime()-today.getTime())/86400000);
+    if(diff===0) return {label:'D-Day', tone:'soon'};
+    if(diff>0)   return {label:'D-'+diff, tone: diff<=3?'soon':'normal'};
+    return {label:'D+'+Math.abs(diff), tone:'over'};
+  }
+  var DDAY_TONE = { normal:'text-slate-400', soon:'text-amber-600', over:'text-red-600' };
+
+  function tasksOf(pid){ return data.tasks.filter(function(t){return t.projectId===pid;}); }
+  function taskCount(pid){
+    var ts = tasksOf(pid);
+    return { total: ts.length, done: ts.filter(function(t){return t.done;}).length };
+  }
+
+  // ---------- 데이터 조작 ----------
+  function addProject(name, desc, deadline){
+    var p = { id:uid(), name:name, description:desc||'', deadline:deadline||'', status:'preparing', createdAt:new Date().toISOString() };
+    data.projects.unshift(p); save(); return p;
+  }
+  function deleteProject(pid){
+    data.projects = data.projects.filter(function(p){return p.id!==pid;});
+    data.tasks = data.tasks.filter(function(t){return t.projectId!==pid;});
+    save();
+  }
+  function setProjectStatus(pid, status){
+    var p = data.projects.filter(function(x){return x.id===pid;})[0];
+    if(p){ p.status = status; save(); }
+  }
+  function addTask(pid, stage, title){
+    data.tasks.push({ id:uid(), projectId:pid, stage:stage, title:title, done:false, createdAt:new Date().toISOString() });
+    save();
+  }
+  function toggleTask(tid){
+    var t = data.tasks.filter(function(x){return x.id===tid;})[0];
+    if(t){ t.done = !t.done; save(); }
+  }
+  function moveTask(tid){
+    var t = data.tasks.filter(function(x){return x.id===tid;})[0];
+    if(t){ var n = nextStage(t.stage); if(n){ t.stage = n; save(); } }
+  }
+  function deleteTask(tid){
+    data.tasks = data.tasks.filter(function(x){return x.id!==tid;});
+    save();
+  }
+  function seedSample(){
+    var p1 = addProject('카페 신메뉴 출시','여름 시즌 음료 3종 개발 및 출시','');
+    var p2 = addProject('매장 인스타 마케팅','주 3회 콘텐츠 업로드','');
+    var p3 = addProject('연말 재고 정리','창고 재고 실사 및 할인 행사','');
+    p1.status='in_progress'; p2.status='review'; p3.status='preparing';
+    var soon = new Date(); soon.setDate(soon.getDate()+5);
+    p1.deadline = soon.toISOString().slice(0,10);
+    var soon2 = new Date(); soon2.setDate(soon2.getDate()+18);
+    p2.deadline = soon2.toISOString().slice(0,10);
+    addTask(p1.id,'preparing','레시피 후보 5종 선정');
+    addTask(p1.id,'in_progress','원가 계산');
+    addTask(p1.id,'in_progress','시제품 테스트');
+    addTask(p1.id,'done','컨셉 회의');
+    addTask(p2.id,'in_progress','촬영 일정 잡기');
+    addTask(p2.id,'review','게시글 검토');
+    // 첫 항목 완료 처리
+    var t = tasksOf(p1.id)[0]; if(t){ t.done=true; }
+    save();
+  }
+
+  // ---------- 아이콘 (인라인 SVG) ----------
+  function icon(name, cls){
+    cls = cls || 'h-4 w-4';
+    var paths = {
+      plus:'<path d="M12 5v14M5 12h14"/>',
+      flow:'<path d="M4 7h5M4 12h9M4 17h13"/><circle cx="18" cy="7" r="2"/><circle cx="20" cy="12" r="0"/>',
+      back:'<path d="M15 18l-6-6 6-6"/>',
+      trash:'<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/>',
+      check:'<path d="M20 6L9 17l-5-5"/>',
+      chevRight:'<path d="M9 6l6 6-6 6"/>',
+      search:'<circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/>',
+      folder:'<path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>',
+      list:'<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
+      grid:'<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>',
+      chart:'<path d="M3 3v18h18"/><path d="M7 14l3-3 3 3 5-6"/>',
+      cal:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>'
+    };
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="'+cls+'">'+(paths[name]||'')+'</svg>';
+  }
+
+  // ---------- 공용: 상단바 ----------
+  function topbar(){
+    return ''+
+    '<header class="sticky top-0 z-10 border-b border-slate-200 bg-white/90 backdrop-blur">'+
+      '<div class="mx-auto flex h-14 max-w-3xl items-center justify-between px-4">'+
+        '<button data-act="home" class="flex items-center gap-2">'+
+          '<span class="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600 text-white">'+icon('flow','h-5 w-5')+'</span>'+
+          '<span class="text-lg font-bold text-slate-900">IM Flow</span>'+
+        '</button>'+
+        '<span class="text-xs text-slate-400">브라우저에 저장됨</span>'+
+      '</div>'+
+    '</header>';
+  }
+
+  // ---------- 대시보드 ----------
+  function renderDashboard(){
+    var app = document.getElementById('app');
+    var projects = data.projects;
+
+    var html = topbar() + '<main class="mx-auto max-w-3xl px-4 py-6">';
+
+    // 헤더
+    html += '<div class="mb-5 flex items-center justify-between">'+
+      '<div><h1 class="text-xl font-bold">내 프로젝트</h1>'+
+      '<p class="text-sm text-slate-500">전체 '+projects.length+'개의 프로젝트를 관리하고 있어요.</p></div>'+
+      '<button data-act="new" class="flex items-center gap-1.5 rounded-lg bg-brand-600 px-3.5 py-2 text-sm font-semibold text-white shadow transition hover:bg-brand-700">'+icon('plus')+'<span class="hidden sm:inline">새 프로젝트</span></button>'+
+      '</div>';
+
+    if(projects.length === 0){
+      html += emptyState();
+    } else {
+      html += statCards(projects);
+      html += viewTabs();
+      if(state.tab === 'list')     html += '<div id="list-view">'+listView()+'</div>';
+      else if(state.tab === 'board') html += boardView();
+      else html += insightsView();
+    }
+
+    html += '</main>';
+    app.innerHTML = html;
+
+    if(state.tab==='list' && projects.length){ restoreSearchFocus(); }
+  }
+
+  function emptyState(){
+    return '<div class="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white py-16 text-center">'+
+      '<span class="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-50 text-brand-500">'+icon('folder','h-7 w-7')+'</span>'+
+      '<h3 class="text-base font-semibold">아직 프로젝트가 없어요</h3>'+
+      '<p class="mt-1 mb-5 text-sm text-slate-500">첫 프로젝트를 만들어 시작해 보세요.</p>'+
+      '<div class="flex gap-2">'+
+        '<button data-act="new" class="flex items-center gap-1.5 rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-700">'+icon('plus')+'새 프로젝트</button>'+
+        '<button data-act="seed" class="rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-50">예시로 둘러보기</button>'+
+      '</div>'+
+    '</div>';
+  }
+
+  function statCards(projects){
+    var ongoing = projects.filter(function(p){return p.status!=='done';}).length;
+    var soon = projects.filter(function(p){
+      if(p.status==='done') return false;
+      var d = getDDay(p.deadline); return d && d.tone!=='normal';
+    }).length;
+    var total=0, done=0;
+    projects.forEach(function(p){ var c=taskCount(p.id); total+=c.total; done+=c.done; });
+    var rate = total>0 ? Math.round(done/total*100) : 0;
+
+    function card(ic, label, val, tone){
+      var tones = { slate:'bg-slate-100 text-slate-600', brand:'bg-brand-50 text-brand-600', amber:'bg-amber-50 text-amber-600', emerald:'bg-emerald-50 text-emerald-600' };
+      return '<div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">'+
+        '<span class="mb-2 flex h-9 w-9 items-center justify-center rounded-xl '+tones[tone]+'">'+icon(ic,'h-5 w-5')+'</span>'+
+        '<p class="text-2xl font-bold leading-none">'+val+'</p>'+
+        '<p class="mt-1 text-xs text-slate-500">'+label+'</p></div>';
+    }
+    return '<div class="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">'+
+      card('folder','전체 프로젝트',projects.length,'slate')+
+      card('flow','진행 중',ongoing,'brand')+
+      card('cal','마감 임박',soon,'amber')+
+      card('chart','평균 완료율',rate+'%','emerald')+
+    '</div>';
+  }
+
+  function viewTabs(){
+    var tabs = [['list','목록','list'],['board','보드','grid'],['insights','분석','chart']];
+    var out = '<div class="mb-4 inline-flex rounded-xl border border-slate-200 bg-white p-1">';
+    tabs.forEach(function(t){
+      var active = state.tab===t[0];
+      out += '<button data-act="tab" data-tab="'+t[0]+'" class="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition '+
+        (active?'bg-brand-600 text-white shadow':'text-slate-500 hover:text-slate-800')+'">'+icon(t[2])+t[1]+'</button>';
+    });
+    return out + '</div>';
+  }
+
+  function projectCardHtml(p){
+    var c = taskCount(p.id);
+    var pct = c.total>0 ? Math.round(c.done/c.total*100) : 0;
+    var dday = getDDay(p.deadline);
+    var m = stageMeta(p.status);
+    return '<button data-act="open" data-id="'+p.id+'" class="group block w-full rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-md">'+
+      '<div class="mb-3 flex items-start justify-between gap-3">'+
+        '<div class="min-w-0"><h3 class="truncate text-base font-semibold">'+esc(p.name)+'</h3>'+
+        (p.description?'<p class="mt-0.5 line-clamp-2 text-sm text-slate-500">'+esc(p.description)+'</p>':'')+'</div>'+
+        '<span class="mt-1 shrink-0 text-slate-300 group-hover:text-brand-400">'+icon('chevRight','h-5 w-5')+'</span>'+
+      '</div>'+
+      '<div class="mb-4 flex flex-wrap items-center gap-2">'+
+        '<span class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium '+m.badge+'"><span class="h-1.5 w-1.5 rounded-full '+m.dot+'"></span>'+m.label+'</span>'+
+        '<span class="flex items-center gap-1 text-xs text-slate-400">'+icon('cal','h-3.5 w-3.5')+esc(formatKoreanDate(p.deadline))+'</span>'+
+        (dday?'<span class="ml-auto text-xs font-semibold '+DDAY_TONE[dday.tone]+'">'+dday.label+'</span>':'')+
+      '</div>'+
+      progressBar(c.done, c.total)+
+    '</button>';
+  }
+
+  function progressBar(done,total){
+    var pct = total>0 ? Math.round(done/total*100) : 0;
+    return '<div><div class="mb-1 flex items-center justify-between text-xs text-slate-500">'+
+      '<span>할일 진행률</span><span class="font-medium text-slate-700">'+done+'/'+total+' · '+pct+'%</span></div>'+
+      '<div class="h-2 w-full overflow-hidden rounded-full bg-slate-100"><div class="h-full rounded-full bg-brand-500 transition-all" style="width:'+pct+'%"></div></div></div>';
+  }
+
+  // 목록 뷰 (검색/필터/정렬)
+  function listView(){
+    var chips = '<button data-act="filter" data-status="all" class="'+chipCls(state.status==='all')+'">전체</button>';
+    STAGES.forEach(function(s){
+      chips += '<button data-act="filter" data-status="'+s.key+'" class="'+chipCls(state.status===s.key)+'"><span class="h-1.5 w-1.5 rounded-full '+s.dot+'"></span>'+s.label+'</button>';
+    });
+    var sorts = [['recent','최신순'],['deadline','마감임박순'],['name','이름순']];
+    var opts = sorts.map(function(o){ return '<option value="'+o[0]+'"'+(state.sort===o[0]?' selected':'')+'>'+o[1]+'</option>'; }).join('');
+
+    var controls = '<div class="mb-4 space-y-3">'+
+      '<div class="relative"><span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">'+icon('search')+'</span>'+
+      '<input id="search" type="text" value="'+esc(state.query)+'" placeholder="프로젝트 이름·설명 검색" class="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-100" /></div>'+
+      '<div class="flex flex-wrap items-center gap-2">'+chips+
+        '<select id="sort" class="ml-auto rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 outline-none">'+opts+'</select>'+
+      '</div></div>';
+
+    return controls + '<div id="results">'+resultsHtml()+'</div>';
+  }
+  function chipCls(active){
+    return 'flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition '+
+      (active?'border-brand-600 bg-brand-600 text-white':'border-slate-200 bg-white text-slate-600 hover:bg-slate-50');
+  }
+  function resultsHtml(){
+    var q = state.query.trim().toLowerCase();
+    var list = data.projects.filter(function(p){
+      if(state.status!=='all' && p.status!==state.status) return false;
+      if(!q) return true;
+      return p.name.toLowerCase().indexOf(q)>=0 || (p.description||'').toLowerCase().indexOf(q)>=0;
+    });
+    list.sort(function(a,b){
+      if(state.sort==='name') return a.name.localeCompare(b.name,'ko');
+      if(state.sort==='deadline'){ if(!a.deadline) return 1; if(!b.deadline) return -1; return a.deadline.localeCompare(b.deadline); }
+      return (b.createdAt||'').localeCompare(a.createdAt||'');
+    });
+    if(list.length===0) return '<div class="rounded-2xl border border-dashed border-slate-300 bg-white py-12 text-center text-sm text-slate-500">조건에 맞는 프로젝트가 없어요.</div>';
+    return '<div class="grid grid-cols-1 gap-4">'+list.map(projectCardHtml).join('')+'</div>';
+  }
+
+  // 보드 뷰
+  function boardView(){
+    var cols = STAGES.map(function(stage){
+      var items = data.projects.filter(function(p){return p.status===stage.key;});
+      var cards = items.length===0
+        ? '<p class="rounded-lg border border-dashed border-slate-200 py-6 text-center text-xs text-slate-400">없음</p>'
+        : items.map(function(p){
+            var c = taskCount(p.id); var pct = c.total>0?Math.round(c.done/c.total*100):0; var dd = getDDay(p.deadline);
+            return '<button data-act="open" data-id="'+p.id+'" class="block w-full rounded-xl border border-slate-200 bg-white p-3 text-left shadow-sm transition hover:border-brand-200 hover:shadow-md">'+
+              '<p class="truncate text-sm font-semibold text-slate-800">'+esc(p.name)+'</p>'+
+              '<div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-100"><div class="h-full rounded-full bg-brand-500" style="width:'+pct+'%"></div></div>'+
+              '<div class="mt-2 flex items-center justify-between text-[11px] text-slate-400"><span>'+c.done+'/'+c.total+' 할일</span>'+
+              (dd?'<span class="font-semibold '+DDAY_TONE[dd.tone]+'">'+dd.label+'</span>':'')+'</div></button>';
+          }).join('');
+      return '<section class="w-60 shrink-0 rounded-2xl border border-slate-200 bg-slate-50/60 p-3 sm:w-auto">'+
+        '<header class="mb-3 flex items-center gap-2 px-1"><span class="h-2 w-2 rounded-full '+stage.dot+'"></span>'+
+        '<h3 class="text-sm font-semibold text-slate-700">'+stage.label+'</h3>'+
+        '<span class="ml-auto text-xs font-medium text-slate-400">'+items.length+'</span></header>'+
+        '<div class="space-y-2">'+cards+'</div></section>';
+    }).join('');
+    return '<div class="-mx-4 flex gap-3 overflow-x-auto px-4 pb-2 sm:mx-0 sm:grid sm:grid-cols-4 sm:overflow-visible sm:px-0">'+cols+'</div>';
+  }
+
+  // 분석 뷰
+  function insightsView(){
+    var total=0, done=0;
+    data.projects.forEach(function(p){ var c=taskCount(p.id); total+=c.total; done+=c.done; });
+    var pct = total>0?Math.round(done/total*100):0;
+
+    // 도넛
+    var r=52, circ=2*Math.PI*r, off=circ*(1-pct/100);
+    var donut = '<div class="flex flex-col items-center justify-center rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">'+
+      '<h3 class="mb-3 self-start text-sm font-semibold text-slate-700">전체 진행률</h3>'+
+      '<div class="relative flex items-center justify-center">'+
+        '<svg width="148" height="148" viewBox="0 0 120 120">'+
+          '<circle cx="60" cy="60" r="'+r+'" fill="none" stroke="#e2e8f0" stroke-width="12"/>'+
+          '<circle cx="60" cy="60" r="'+r+'" fill="none" stroke="#3b6bf6" stroke-width="12" stroke-linecap="round" stroke-dasharray="'+circ+'" stroke-dashoffset="'+off+'" transform="rotate(-90 60 60)"/>'+
+        '</svg>'+
+        '<div class="absolute text-center"><p class="text-3xl font-bold">'+pct+'%</p><p class="text-[11px] text-slate-400">할일 완료</p></div>'+
+      '</div><p class="mt-3 text-xs text-slate-500">전체 '+total+'개 중 '+done+'개 완료</p></div>';
+
+    // 단계별 막대
+    var counts = STAGES.map(function(s){ return { s:s, n: data.projects.filter(function(p){return p.status===s.key;}).length }; });
+    var maxN = Math.max.apply(null, [1].concat(counts.map(function(c){return c.n;})));
+    var bars = counts.map(function(c){
+      return '<div><div class="mb-1 flex items-center justify-between text-xs">'+
+        '<span class="flex items-center gap-1.5 text-slate-600"><span class="h-1.5 w-1.5 rounded-full '+c.s.dot+'"></span>'+c.s.label+'</span>'+
+        '<span class="font-medium text-slate-500">'+c.n+'개</span></div>'+
+        '<div class="h-2.5 w-full overflow-hidden rounded-full bg-slate-100"><div class="h-full rounded-full '+c.s.dot+' transition-all" style="width:'+(c.n/maxN*100)+'%"></div></div></div>';
+    }).join('');
+    var barCard = '<div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><h3 class="mb-4 text-sm font-semibold text-slate-700">단계별 프로젝트</h3><div class="space-y-3">'+bars+'</div></div>';
+
+    // 다가오는 마감
+    var up = data.projects.filter(function(p){return p.status!=='done' && p.deadline;})
+      .sort(function(a,b){return a.deadline.localeCompare(b.deadline);}).slice(0,5);
+    var rows = up.length===0
+      ? '<p class="py-6 text-center text-sm text-slate-400">마감일이 설정된 진행 프로젝트가 없어요.</p>'
+      : '<ul class="divide-y divide-slate-100">'+up.map(function(p){
+          var dd = getDDay(p.deadline); var c = taskCount(p.id); var pp = c.total>0?Math.round(c.done/c.total*100):0;
+          return '<li><button data-act="open" data-id="'+p.id+'" class="flex w-full items-center gap-3 py-2.5 text-left transition hover:opacity-70">'+
+            '<div class="min-w-0 flex-1"><p class="truncate text-sm font-medium text-slate-800">'+esc(p.name)+'</p><p class="text-xs text-slate-400">'+esc(formatKoreanDate(p.deadline))+'</p></div>'+
+            '<div class="hidden w-24 sm:block"><div class="h-1.5 w-full overflow-hidden rounded-full bg-slate-100"><div class="h-full rounded-full bg-brand-500" style="width:'+pp+'%"></div></div></div>'+
+            (dd?'<span class="w-12 text-right text-xs font-bold '+DDAY_TONE[dd.tone]+'">'+dd.label+'</span>':'')+
+          '</button></li>';
+        }).join('')+'</ul>';
+    var upCard = '<div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:col-span-2"><h3 class="mb-3 flex items-center gap-1.5 text-sm font-semibold text-slate-700">'+icon('cal','h-4 w-4 text-amber-500')+'다가오는 마감</h3>'+rows+'</div>';
+
+    return '<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">'+donut+barCard+upCard+'</div>';
+  }
+
+  // ---------- 프로젝트 상세 ----------
+  function renderProject(){
+    var app = document.getElementById('app');
+    var p = data.projects.filter(function(x){return x.id===state.projectId;})[0];
+    if(!p){ state.view='dashboard'; return render(); }
+
+    var dd = getDDay(p.deadline);
+    var c = taskCount(p.id);
+    var curIdx = STAGE_KEYS.indexOf(p.status);
+
+    var stepper = STAGES.map(function(s, idx){
+      var active = idx===curIdx, passed = idx<curIdx;
+      var cls = active ? 'bg-brand-600 text-white shadow border-brand-600'
+              : passed ? 'bg-brand-50 text-brand-600 border-slate-200'
+                       : 'bg-white text-slate-500 hover:bg-slate-50 border-slate-200';
+      return '<button data-act="status" data-status="'+s.key+'" class="flex flex-1 items-center justify-center gap-1.5 rounded-xl border px-2 py-2.5 text-sm font-medium transition '+cls+'">'+
+        (passed?icon('check','h-3.5 w-3.5'):'')+s.label+'</button>';
+    }).join('');
+
+    var cols = STAGES.map(function(stage){
+      var items = data.tasks.filter(function(t){return t.projectId===p.id && t.stage===stage.key;});
+      var rows = items.map(function(t){
+        var canMove = nextStage(t.stage)!==null && !t.done;
+        return '<div class="group flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-2">'+
+          '<button data-act="toggle" data-id="'+t.id+'" class="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition '+
+            (t.done?'border-emerald-500 bg-emerald-500 text-white':'border-slate-300 text-transparent hover:border-brand-400')+'">'+icon('check','h-3.5 w-3.5')+'</button>'+
+          '<span class="flex-1 text-sm '+(t.done?'text-slate-400 line-through':'text-slate-700')+'">'+esc(t.title)+'</span>'+
+          (canMove?'<button data-act="move" data-id="'+t.id+'" title="다음 단계로" class="shrink-0 rounded p-1 text-slate-300 transition hover:bg-brand-50 hover:text-brand-500">'+icon('chevRight')+'</button>':'')+
+          '<button data-act="deltask" data-id="'+t.id+'" class="shrink-0 rounded p-1 text-slate-300 transition hover:bg-red-50 hover:text-red-500">'+icon('trash')+'</button>'+
+        '</div>';
+      }).join('');
+      return '<section class="rounded-2xl border border-slate-200 bg-slate-50/60 p-3">'+
+        '<header class="mb-3 flex items-center gap-2 px-1"><span class="h-2 w-2 rounded-full '+stage.dot+'"></span>'+
+        '<h3 class="text-sm font-semibold text-slate-700">'+stage.label+'</h3>'+
+        '<span class="ml-auto text-xs font-medium text-slate-400">'+items.length+'</span></header>'+
+        '<div class="space-y-2">'+rows+'</div>'+
+        '<form data-act="addtask" data-stage="'+stage.key+'" class="mt-2 flex items-center gap-1.5">'+
+          '<input name="title" maxlength="200" placeholder="할일 추가..." class="flex-1 rounded-lg border border-transparent bg-white px-2.5 py-1.5 text-sm outline-none transition placeholder:text-slate-400 focus:border-brand-300 focus:ring-2 focus:ring-brand-100" />'+
+          '<button type="submit" class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-slate-400 transition hover:bg-brand-50 hover:text-brand-500">'+icon('plus')+'</button>'+
+        '</form></section>';
+    }).join('');
+
+    var html = topbar() + '<main class="mx-auto max-w-3xl px-4 py-6">'+
+      '<button data-act="home" class="mb-4 flex items-center gap-1 text-sm text-slate-500 transition hover:text-slate-800">'+icon('back')+'대시보드</button>'+
+      '<div class="mb-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">'+
+        '<div class="flex items-start justify-between gap-3">'+
+          '<div class="min-w-0"><h1 class="text-xl font-bold">'+esc(p.name)+'</h1>'+
+          (p.description?'<p class="mt-1 whitespace-pre-wrap text-sm text-slate-500">'+esc(p.description)+'</p>':'')+'</div>'+
+          '<button data-act="delproject" class="flex shrink-0 items-center gap-1 rounded-lg px-2 py-1.5 text-sm text-slate-400 transition hover:bg-red-50 hover:text-red-500">'+icon('trash')+'<span class="hidden sm:inline">삭제</span></button>'+
+        '</div>'+
+        '<div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">'+
+          '<span class="flex items-center gap-1 text-slate-500">'+icon('cal','h-3.5 w-3.5')+esc(formatKoreanDate(p.deadline))+'</span>'+
+          (dd?'<span class="font-semibold '+DDAY_TONE[dd.tone]+'">'+dd.label+'</span>':'')+
+          '<span class="text-slate-500">할일 '+c.done+'/'+c.total+' 완료</span>'+
+        '</div>'+
+      '</div>'+
+      '<div class="mb-5"><p class="mb-2 text-sm font-semibold text-slate-700">프로젝트 단계</p><div class="flex items-center gap-1.5">'+stepper+'</div></div>'+
+      '<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">'+cols+'</div>'+
+    '</main>';
+
+    app.innerHTML = html;
+  }
+
+  // ---------- 새 프로젝트 모달 ----------
+  function openModal(){
+    var root = document.getElementById('modal-root');
+    root.innerHTML = '<div data-act="modal-bg" class="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 sm:items-center sm:p-4">'+
+      '<div data-stop="1" class="w-full max-w-md rounded-t-2xl bg-white p-6 shadow-xl sm:rounded-2xl">'+
+        '<div class="mb-4 flex items-center justify-between"><h2 class="text-lg font-bold">새 프로젝트</h2>'+
+        '<button data-act="modal-close" class="rounded-lg p-1 text-slate-400 hover:bg-slate-100">✕</button></div>'+
+        '<form id="new-form" class="space-y-4">'+
+          '<div><label class="mb-1.5 block text-sm font-medium text-slate-700">프로젝트 이름 <span class="text-red-500">*</span></label>'+
+          '<input name="name" required maxlength="100" placeholder="예) 카페 신메뉴 출시" class="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100" /></div>'+
+          '<div><label class="mb-1.5 block text-sm font-medium text-slate-700">설명</label>'+
+          '<textarea name="description" rows="3" maxlength="500" placeholder="간단한 설명을 적어주세요." class="w-full resize-none rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"></textarea></div>'+
+          '<div><label class="mb-1.5 block text-sm font-medium text-slate-700">마감일</label>'+
+          '<input name="deadline" type="date" class="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100" /></div>'+
+          '<div class="flex gap-2 pt-1">'+
+            '<button type="button" data-act="modal-close" class="flex-1 rounded-lg border border-slate-300 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50">취소</button>'+
+            '<button type="submit" class="flex-1 rounded-lg bg-brand-600 py-2.5 text-sm font-semibold text-white hover:bg-brand-700">만들기</button>'+
+          '</div>'+
+        '</form>'+
+      '</div>'+
+    '</div>';
+    var inp = root.querySelector('input[name=name]'); if(inp) inp.focus();
+    root.querySelector('#new-form').addEventListener('submit', function(e){
+      e.preventDefault();
+      var f = e.target;
+      var name = f.name.value.trim(); if(!name) return;
+      addProject(name, f.description.value.trim(), f.deadline.value);
+      closeModal(); render();
+    });
+  }
+  function closeModal(){ document.getElementById('modal-root').innerHTML=''; }
+
+  // ---------- 검색 포커스 유지 ----------
+  var searchWasFocused = false, searchCaret = 0;
+  function restoreSearchFocus(){
+    var s = document.getElementById('search');
+    if(s && searchWasFocused){ s.focus(); try{ s.setSelectionRange(searchCaret, searchCaret); }catch(e){} }
+  }
+
+  // ---------- 라우팅/렌더 ----------
+  function render(){
+    if(state.view==='project') renderProject();
+    else renderDashboard();
+    window.scrollTo(0,0);
+  }
+
+  // ---------- 이벤트 위임 ----------
+  document.addEventListener('click', function(e){
+    var el = e.target.closest('[data-act]'); if(!el) return;
+    var act = el.getAttribute('data-act');
+
+    if(act==='home'){ state.view='dashboard'; state.projectId=null; render(); }
+    else if(act==='new'){ openModal(); }
+    else if(act==='seed'){ seedSample(); render(); }
+    else if(act==='tab'){ state.tab = el.getAttribute('data-tab'); render(); }
+    else if(act==='filter'){ state.status = el.getAttribute('data-status'); rerenderResults(); updateChips(); }
+    else if(act==='open'){ state.view='project'; state.projectId = el.getAttribute('data-id'); render(); }
+    else if(act==='status'){ setProjectStatus(state.projectId, el.getAttribute('data-status')); render(); }
+    else if(act==='toggle'){ toggleTask(el.getAttribute('data-id')); render(); }
+    else if(act==='move'){ moveTask(el.getAttribute('data-id')); render(); }
+    else if(act==='deltask'){ deleteTask(el.getAttribute('data-id')); render(); }
+    else if(act==='delproject'){ if(confirm('이 프로젝트와 모든 할일이 삭제됩니다. 계속할까요?')){ deleteProject(state.projectId); state.view='dashboard'; render(); } }
+    else if(act==='modal-close'){ closeModal(); }
+    else if(act==='modal-bg'){ if(!e.target.closest('[data-stop]')) closeModal(); }
+  });
+
+  // 할일 추가 폼 (submit)
+  document.addEventListener('submit', function(e){
+    var form = e.target.closest('form[data-act="addtask"]'); if(!form) return;
+    e.preventDefault();
+    var title = form.title.value.trim(); if(!title) return;
+    addTask(state.projectId, form.getAttribute('data-stage'), title);
+    render();
+  });
+
+  // 검색/정렬 (input/change) — 목록만 부분 갱신
+  document.addEventListener('input', function(e){
+    if(e.target.id==='search'){
+      state.query = e.target.value;
+      searchWasFocused = true; searchCaret = e.target.selectionStart || e.target.value.length;
+      rerenderResults();
+    }
+  });
+  document.addEventListener('change', function(e){
+    if(e.target.id==='sort'){ state.sort = e.target.value; rerenderResults(); }
+  });
+  document.addEventListener('focusout', function(e){
+    if(e.target.id==='search') searchWasFocused=false;
+  });
+
+  function rerenderResults(){
+    var box = document.getElementById('results');
+    if(box){ box.innerHTML = resultsHtml(); }
+  }
+  function updateChips(){
+    // 필터 칩 활성화 표시 갱신
+    var box = document.getElementById('list-view');
+    if(box){ box.innerHTML = listView(); restoreSearchFocus(); }
+  }
+
+  // 시작
+  render();
+})();
+</script>
+</body>
+</html>
