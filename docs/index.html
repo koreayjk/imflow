@@ -54,9 +54,21 @@
   };
   var REPEATS = { none:'반복 없음', daily:'매일', weekly:'매주' };
 
+  // ---------- 임베드 설정 ----------
+  // TCS 등 외부 프로그램에 심을 때, 페이지에서 전역 변수로 설정할 수 있어요:
+  //   window.IMFLOW_CONFIG = { storageKey: 'tcs_imflow', showHeader: false }
+  // 또는 URL 파라미터: ?storageKey=tcs_imflow&header=0
+  var CFG = (typeof window !== 'undefined' && window.IMFLOW_CONFIG) ? window.IMFLOW_CONFIG : {};
+  try {
+    var qs = new URLSearchParams(location.search);
+    if(qs.get('storageKey')) CFG.storageKey = qs.get('storageKey');
+    if(qs.get('header')==='0') CFG.showHeader = false;
+  } catch(e){}
+  var SHOW_HEADER = CFG.showHeader !== false;
+
   // ---------- 저장소 ----------
-  var STORE_KEY = 'imflow_data_v1';
-  var NOTIFY_KEY = 'imflow_notify_v1';
+  var STORE_KEY = CFG.storageKey || 'imflow_data_v1';
+  var NOTIFY_KEY = STORE_KEY + '_notify';
   var data = load();
   var notifyOn = (function(){ try { return localStorage.getItem(NOTIFY_KEY)==='1'; } catch(e){ return false; } })();
 
@@ -210,6 +222,7 @@
 
   // ---------- 상단바 ----------
   function topbar(){
+    if(!SHOW_HEADER) return '';
     var bell = notifyOn && typeof Notification!=='undefined' && Notification.permission==='granted';
     return '<header class="sticky top-0 z-10 border-b border-slate-200 bg-white/90 backdrop-blur">'+
       '<div class="mx-auto flex h-14 max-w-3xl items-center justify-between px-4">'+
