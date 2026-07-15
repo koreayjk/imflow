@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>IM Flow · Supabase 연결 테스트</title>
+<style>
+  :root { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif; }
+  body { margin:0; background:#f8fafc; color:#0f172a; }
+  .wrap { max-width:520px; margin:0 auto; padding:24px 16px 60px; }
+  h1 { font-size:20px; margin:8px 0 4px; }
+  .sub { color:#64748b; font-size:14px; margin-bottom:20px; }
+  .card { background:#fff; border:1px solid #e2e8f0; border-radius:16px; padding:18px; margin-bottom:16px; box-shadow:0 1px 2px rgba(0,0,0,.04); }
+  label { display:block; font-size:13px; font-weight:600; color:#334155; margin:10px 0 5px; }
+  input { width:100%; box-sizing:border-box; padding:10px 12px; border:1px solid #cbd5e1; border-radius:10px; font-size:14px; outline:none; }
+  input:focus { border-color:#3b6bf6; box-shadow:0 0 0 3px #dbeafe; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; margin-top:14px; }
+  button { flex:1; min-width:120px; padding:11px 14px; border:0; border-radius:10px; font-size:14px; font-weight:700; cursor:pointer; }
+  .primary { background:#244eeb; color:#fff; } .primary:hover{ background:#1d3dd8; }
+  .ghost { background:#fff; border:1px solid #cbd5e1; color:#475569; } .ghost:hover{ background:#f1f5f9; }
+  .dark { background:#1e293b; color:#fff; } .dark:hover{ background:#0f172a; }
+  #log { font-size:13px; line-height:1.6; }
+  .ok { color:#059669; } .err { color:#dc2626; } .info { color:#475569; } .step { font-weight:700; margin-top:10px; }
+  code { background:#f1f5f9; padding:1px 5px; border-radius:5px; font-size:12px; }
+  .muted { color:#94a3b8; font-size:12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Supabase 연결 테스트</h1>
+  <p class="sub">로그인 → 저장 → 읽기 → 권한까지 한 번에 확인합니다. 문제가 있으면 아래에 원인을 알려줘요.</p>
+
+  <div class="card">
+    <label>이메일</label>
+    <input id="email" type="email" placeholder="you@example.com" autocomplete="username" />
+    <label>비밀번호 (6자 이상)</label>
+    <input id="pw" type="password" placeholder="비밀번호" autocomplete="current-password" />
+    <div class="row">
+      <button class="primary" id="btn-signup">① 회원가입</button>
+      <button class="dark" id="btn-login">② 로그인</button>
+    </div>
+    <div class="row">
+      <button class="ghost" id="btn-test" disabled>③ 저장·읽기 테스트</button>
+      <button class="ghost" id="btn-logout" disabled>로그아웃</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div id="log"><span class="muted">여기에 진행 상황이 표시됩니다.</span></div>
+  </div>
+
+  <p class="muted">먼저 Supabase에서 <code>supabase/mission-schema.sql</code> 을 실행하고,
+  Authentication → Providers → Email 에서 <b>"Confirm email"</b> 을 꺼두면 바로 테스트할 수 있어요.</p>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+(function(){
+  var SUPABASE_URL = 'https://bbfvnmlrdtzmcwfadjqw.supabase.co';
+  var SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJiZnZubWxyZHR6bWN3ZmFkanF3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI1Njg1OTIsImV4cCI6MjA5ODE0NDU5Mn0.nJbRfTkcjVxsb_BO6sAP_0lOxQ--wTFXVN9tBH1IPNA';
+
+  var logEl = document.getElementById('log');
+  function log(msg, cls){ if(logEl.querySelector('.muted')) logEl.innerHTML=''; var d=document.createElement('div'); d.className=cls||'info'; d.innerHTML=msg; logEl.appendChild(d); }
+  function step(msg){ log(msg,'step'); }
+
+  if(!window.supabase || !window.supabase.createClient){
+    log('❌ Supabase 라이브러리를 불러오지 못했어요. 인터넷 연결을 확인하고 새로고침하세요.','err'); return;
+  }
+  var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+
+  function humanError(e){
+    var m = (e && (e.message||e.error_description||e.msg)) ? (e.message||e.error_description||e.msg) : String(e);
+    var l = m.toLowerCase();
+    if(l.indexOf('does not exist')>=0 || l.indexOf('mf_tasks')>=0 || l.indexOf('mf_profiles')>=0 || l.indexOf('relation')>=0)
+      return m+' <br>→ <b>스키마가 아직 없어요.</b> Supabase SQL Editor 에서 <code>mission-schema.sql</code> 을 실행하세요.';
+    if(l.indexOf('email not confirmed')>=0)
+      return m+' <br>→ <b>이메일 인증이 켜져 있어요.</b> Authentication → Providers → Email 에서 "Confirm email" 을 끄거나, 받은 메일을 인증하세요.';
+    if(l.indexOf('invalid login')>=0)
+      return m+' <br>→ 이메일 또는 비밀번호가 틀렸어요. (가입을 먼저 하셨나요?)';
+    if(l.indexOf('user already registered')>=0)
+      return m+' <br>→ 이미 가입된 이메일이에요. ②로그인 을 누르세요.';
+    if(l.indexOf('failed to fetch')>=0 || l.indexOf('networkerror')>=0)
+      return m+' <br>→ Supabase 주소에 연결하지 못했어요. 인터넷/URL 을 확인하세요.';
+    return m;
+  }
+
+  function creds(){ return { email:document.getElementById('email').value.trim(), password:document.getElementById('pw').value }; }
+  function setAuthed(on){ document.getElementById('btn-test').disabled=!on; document.getElementById('btn-logout').disabled=!on; }
+
+  document.getElementById('btn-signup').onclick = async function(){
+    var c=creds(); if(!c.email||!c.password){ log('이메일과 비밀번호를 입력하세요.','err'); return; }
+    step('① 회원가입 시도...');
+    var { data, error } = await sb.auth.signUp(c);
+    if(error){ log('❌ 회원가입 실패: '+humanError(error),'err'); return; }
+    if(data.session){ log('✅ 회원가입 + 자동 로그인 성공!','ok'); await afterLogin(); }
+    else log('✅ 회원가입 요청됨. "Confirm email" 이 켜져 있으면 메일 인증 후 ②로그인 하세요. (내부용이면 그 설정을 끄는 걸 추천)','ok');
+  };
+
+  document.getElementById('btn-login').onclick = async function(){
+    var c=creds(); if(!c.email||!c.password){ log('이메일과 비밀번호를 입력하세요.','err'); return; }
+    step('② 로그인 시도...');
+    var { data, error } = await sb.auth.signInWithPassword(c);
+    if(error){ log('❌ 로그인 실패: '+humanError(error),'err'); return; }
+    log('✅ 로그인 성공: '+data.user.email,'ok'); await afterLogin();
+  };
+
+  async function afterLogin(){
+    setAuthed(true);
+    var { data:{ user } } = await sb.auth.getUser();
+    // 프로필 확인/생성
+    var { data:prof, error:pe } = await sb.from('mf_profiles').select('*').eq('id', user.id).maybeSingle();
+    if(pe){ log('❌ 프로필 조회 실패: '+humanError(pe),'err'); return; }
+    if(!prof){
+      var name = (user.email||'').split('@')[0];
+      var { data:np, error:ie } = await sb.from('mf_profiles').insert({ id:user.id, name:name, branch:'', role:'missionary' }).select().single();
+      if(ie){ log('❌ 프로필 생성 실패: '+humanError(ie),'err'); return; }
+      prof = np; log('✅ 프로필 생성됨 (이름: '+name+', 역할: 선교사)','ok');
+    } else {
+      log('✅ 프로필 확인 (이름: '+(prof.name||'-')+', 역할: '+(prof.role==='director'?'디렉터':'선교사')+')','ok');
+    }
+  }
+
+  document.getElementById('btn-test').onclick = async function(){
+    var { data:{ user } } = await sb.auth.getUser();
+    if(!user){ log('먼저 로그인하세요.','err'); return; }
+    step('③ 저장·읽기 테스트...');
+    var title='연결 테스트 항목';
+    var { data:ins, error:ie } = await sb.from('mf_tasks').insert({ user_id:user.id, title:title, horizon:'today' }).select().single();
+    if(ie){ log('❌ 저장 실패: '+humanError(ie),'err'); return; }
+    log('✅ 저장 성공 (id: '+ins.id.slice(0,8)+'…)','ok');
+    var { data:rows, error:se } = await sb.from('mf_tasks').select('*').eq('user_id', user.id);
+    if(se){ log('❌ 읽기 실패: '+humanError(se),'err'); return; }
+    log('✅ 읽기 성공 — 내 할일 '+rows.length+'개','ok');
+    // 정리(방금 만든 테스트 항목 삭제)
+    await sb.from('mf_tasks').delete().eq('id', ins.id);
+    log('🎉 <b>연결 완벽! 로그인·저장·읽기·권한 모두 정상입니다.</b> 이제 본 프로그램을 붙이면 돼요.','ok');
+  };
+
+  document.getElementById('btn-logout').onclick = async function(){ await sb.auth.signOut(); setAuthed(false); log('로그아웃 되었습니다.','info'); };
+
+  // 기존 세션이 있으면 자동 인식
+  sb.auth.getSession().then(function(r){ if(r.data.session){ log('기존 세션 감지: '+r.data.session.user.email,'info'); afterLogin(); } });
+})();
+</script>
+</body>
+</html>
