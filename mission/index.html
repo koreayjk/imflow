@@ -76,7 +76,7 @@
   function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
 
   // ===== 상태 =====
-  var state = { area:'all', rollInfo:null };
+  var state = { view:'today', rollInfo:null };
 
   // ===== 하루 넘김(자동) =====
   function rollIfNewDay(){
@@ -185,28 +185,60 @@
       '</div>'+chips(t)+'</div>';
   }
 
-  // ===== 렌더 =====
+  // ===== 렌더 (왼쪽 메뉴 + 오른쪽 내용) =====
+  function itemsFor(view){
+    if(view==='overdue') return data.tasks.filter(function(t){return !t.done && t.carry>0;});
+    if(view.indexOf('area:')===0){ var a=view.slice(5); return data.tasks.filter(function(t){return t.area===a;}); }
+    return data.tasks.filter(function(t){return t.horizon===view;});
+  }
+  function openCount(view){ return itemsFor(view).filter(function(t){return !t.done;}).length; }
+  function viewMeta(v){
+    if(v.indexOf('area:')===0) return { label:v.slice(5), type:'area' };
+    var m={today:'오늘',week:'이번 주',month:'이번 달',someday:'언젠가',overdue:'밀린 일'};
+    return { label:(m[v]||'오늘'), type:v };
+  }
+  function defHorizon(){ return (state.view==='week'||state.view==='month'||state.view==='someday') ? state.view : 'today'; }
+  function sortItems(a,b){ if(a.done!==b.done) return a.done?1:-1; if((b.carry||0)!==(a.carry||0)) return (b.carry||0)-(a.carry||0); return P_RANK[a.priority]-P_RANK[b.priority]; }
+
+  function navItem(view,label,ic){
+    var active=state.view===view, cnt=openCount(view);
+    var bcls = view==='overdue' ? (active?'bg-white/25 text-white':'bg-red-100 text-red-600') : (active?'bg-white/25 text-white':'bg-slate-100 text-slate-500');
+    var badge = cnt ? '<span class="ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-bold '+bcls+'">'+cnt+'</span>' : '';
+    return '<button data-act="nav" data-view="'+esc(view)+'" class="flex items-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition md:w-full '+(active?'bg-brand-600 text-white':'text-slate-600 hover:bg-slate-100')+'">'+icon(ic,'h-4 w-4 shrink-0')+'<span>'+esc(label)+'</span>'+badge+'</button>';
+  }
+  function sidebar(){
+    var bell = notifyOn && typeof Notification!=='undefined' && Notification.permission==='granted';
+    var brand = SHOW_HEADER ? '<div class="flex items-center justify-between px-3 py-3">'+
+        '<div class="flex items-center gap-2"><span class="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600 text-white">'+icon('sun','h-5 w-5')+'</span><span class="text-base font-bold">IM Flow</span></div>'+
+        '<button data-act="notify" title="알림" class="rounded-lg p-1.5 '+(bell?'text-brand-600':'text-slate-400')+' hover:bg-slate-100">'+icon(bell?'bell':'bellOff','h-4 w-4')+'</button></div>' : '';
+    var primary = [['today','오늘','sun'],['week','이번 주','cal'],['month','이번 달','cal'],['someday','언젠가','moon'],['overdue','밀린 일','alert']].map(function(v){ return navItem(v[0],v[1],v[2]); }).join('');
+    var ars = areas();
+    var areaNav = ars.length ? '<div class="hidden px-3 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400 md:block">영역</div>'+ars.map(function(a){ return navItem('area:'+a, a, 'tag'); }).join('') : '';
+    return '<aside class="border-b border-slate-200 bg-white md:w-56 md:shrink-0 md:border-b-0 md:border-r">'+brand+
+      '<nav class="flex gap-1 overflow-x-auto p-2 md:flex-col md:gap-0.5 md:overflow-visible md:p-3">'+primary+areaNav+'</nav></aside>';
+  }
   function render(){
-    var app=document.getElementById('app');
-    var today=todayStr();
-    var openTasks=data.tasks.filter(function(t){return !t.done;});
-    var overdue=data.tasks.filter(function(t){return !t.done && t.carry>0;}).length;
-    var todayTotal=data.tasks.filter(function(t){return t.horizon==='today';}).length;
-    var todayDone=data.tasks.filter(function(t){return t.horizon==='today'&&t.done;}).length;
+    document.getElementById('app').innerHTML='<div class="md:flex md:min-h-screen">'+sidebar()+'<main class="min-w-0 flex-1 bg-slate-50"><div class="mx-auto max-w-3xl px-4 py-5 md:px-8 md:py-6">'+content()+'</div></main></div>';
+  }
+  function content(){
+    if(data.tasks.length===0){
+      return '<div class="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white py-20 text-center">'+
+        '<span class="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-50 text-brand-500">'+icon('sun','h-7 w-7')+'</span>'+
+        '<h3 class="text-base font-semibold">오늘부터 시작해요</h3><p class="mt-1 mb-5 text-sm text-slate-500">할 일을 추가하거나, 예시를 둘러보세요.</p>'+
+        '<button data-act="seed" class="rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50">예시로 둘러보기</button></div>';
+    }
+    var v=state.view, meta=viewMeta(v), items=itemsFor(v);
+    var openN=items.filter(function(t){return !t.done;}).length, doneN=items.length-openN;
+    var overdueAll=data.tasks.filter(function(t){return !t.done && t.carry>0;}).length;
 
-    var html=topbar()+'<main class="mx-auto max-w-2xl px-4 py-6">';
+    var html='<div class="mb-4 flex items-start justify-between gap-3">'+
+      '<div><h1 class="text-xl font-bold">'+esc(meta.label)+'</h1>'+
+      '<p class="text-sm text-slate-500">'+openN+'개 남음 · '+doneN+'개 완료'+((overdueAll&&v!=='overdue')?' · <span class="font-semibold text-red-600">전체 밀림 '+overdueAll+'</span>':'')+'</p></div>'+
+      '<div class="flex items-center gap-2">'+
+        '<button data-act="closeday" class="flex items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-900">'+icon('moon','h-4 w-4')+'<span class="hidden sm:inline">하루 마감</span></button>'+
+        '<button data-act="newfull" class="flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-2 text-sm font-semibold text-white hover:bg-brand-700">'+icon('plus','h-4 w-4')+'<span class="hidden sm:inline">새 할일</span></button>'+
+      '</div></div>';
 
-    // 헤더 + 하루 마감
-    html+='<div class="mb-4 flex items-center justify-between"><div><h1 class="text-xl font-bold">할 일</h1>'+
-      '<p class="text-sm text-slate-500">오늘 '+todayDone+'/'+todayTotal+' 완료'+(overdue?' · <span class="font-semibold text-red-600">밀린 일 '+overdue+'개</span>':'')+'</p></div>'+
-      '<button data-act="closeday" class="flex items-center gap-1.5 rounded-lg bg-slate-800 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-slate-900">'+icon('moon','h-4 w-4')+'<span class="hidden sm:inline">하루 마감</span></button></div>';
-
-    // 빠른 추가
-    html+='<form id="quickadd" class="mb-4 flex items-center gap-2"><div class="relative flex-1">'+icon('plus','h-4 w-4 text-slate-400 pointer-events-none absolute left-3 top-1/2 -translate-y-1/2')+
-      '<input name="q" placeholder="오늘 할 일 빠르게 추가..." class="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-100" /></div>'+
-      '<button type="button" data-act="newfull" class="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50">상세</button></form>';
-
-    // 자동 넘김 배너
     if(state.rollInfo && (state.rollInfo.carried||state.rollInfo.revived)){
       html+='<div class="mb-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">'+icon('alert','h-4 w-4 mt-0.5 text-amber-500')+
         '<div>'+(state.rollInfo.carried?'어제 못 끝낸 <b>'+state.rollInfo.carried+'개</b>가 오늘로 넘어왔어요(밀림). ':'')+
@@ -214,44 +246,28 @@
         '<button data-act="dismiss-roll" class="ml-auto text-amber-500 hover:text-amber-700">✕</button></div>';
     }
 
-    // 밀린 할일이 없을 때가 없더라도, 데이터 없으면 안내
-    if(data.tasks.length===0){
-      html+='<div class="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white py-16 text-center">'+
-        '<span class="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-50 text-brand-500">'+icon('sun','h-7 w-7')+'</span>'+
-        '<h3 class="text-base font-semibold">오늘부터 시작해요</h3><p class="mt-1 mb-5 text-sm text-slate-500">위에 할 일을 적거나, 예시를 둘러보세요.</p>'+
-        '<button data-act="seed" class="rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50">예시로 둘러보기</button></div>';
-    } else {
-      // 영역 필터
-      var ars=areas();
-      if(ars.length){
-        html+='<div class="mb-4 flex flex-wrap items-center gap-2"><button data-act="area" data-area="all" class="'+chipCls(state.area==='all')+'">전체</button>'+
-          ars.map(function(a){ return '<button data-act="area" data-area="'+esc(a)+'" class="'+chipCls(state.area===a)+'">'+icon('tag','h-3 w-3')+esc(a)+'</button>'; }).join('')+'</div>';
-      }
-      // 지평별 섹션
+    html+='<form id="quickadd" data-h="'+defHorizon()+'" class="mb-4 flex items-center gap-2"><div class="relative flex-1">'+icon('plus','h-4 w-4 text-slate-400 pointer-events-none absolute left-3 top-1/2 -translate-y-1/2')+
+      '<input name="q" placeholder="'+esc(meta.label)+'에 할 일 추가..." class="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-100" /></div></form>';
+
+    if(items.length===0){
+      html+='<div class="rounded-2xl border border-dashed border-slate-300 bg-white py-14 text-center text-sm text-slate-400">'+(v==='overdue'?'밀린 일이 없어요. 좋아요! 👍':'여기에 할 일이 없어요.')+'</div>';
+    } else if(meta.type==='area'){
       HORIZONS.forEach(function(h){
-        var items=data.tasks.filter(function(t){ return t.horizon===h.key && (state.area==='all'||t.area===state.area); });
-        items.sort(function(a,b){ if(a.done!==b.done) return a.done?1:-1; if((b.carry||0)!==(a.carry||0)) return (b.carry||0)-(a.carry||0); return P_RANK[a.priority]-P_RANK[b.priority]; });
-        html+='<section class="mb-4">'+
-          '<div class="mb-2 flex items-center gap-2"><span class="h-2.5 w-2.5 rounded-full '+h.dot+'"></span><h2 class="text-sm font-bold text-slate-700">'+h.label+'</h2>'+
-          '<span class="text-xs text-slate-400">'+items.length+'</span><span class="ml-auto text-[11px] text-slate-400">'+h.hint+'</span></div>'+
-          '<div class="space-y-2">'+(items.length? items.map(taskRow).join('') : '<p class="rounded-lg border border-dashed border-slate-200 bg-white py-4 text-center text-xs text-slate-400">없음</p>')+'</div>'+
-          '<form data-act="addhere" data-h="'+h.key+'" class="mt-2 flex items-center gap-1.5"><input name="title" maxlength="200" placeholder="'+h.label+'에 추가..." class="flex-1 rounded-lg border border-transparent bg-white px-2.5 py-1.5 text-sm outline-none transition placeholder:text-slate-400 focus:border-brand-300 focus:ring-2 focus:ring-brand-100" />'+
-          '<button type="submit" class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-slate-400 hover:bg-brand-50 hover:text-brand-500">'+icon('plus')+'</button></form>'+
-        '</section>';
+        var sub=items.filter(function(t){return t.horizon===h.key;}); if(!sub.length) return;
+        sub.sort(sortItems);
+        html+='<div class="mb-4"><div class="mb-2 flex items-center gap-2"><span class="h-2 w-2 rounded-full '+h.dot+'"></span><h2 class="text-xs font-bold text-slate-500">'+h.label+'</h2><span class="text-[11px] text-slate-400">'+sub.length+'</span></div><div class="space-y-2">'+sub.map(taskRow).join('')+'</div></div>';
       });
+    } else {
+      html+='<div class="space-y-2">'+items.slice().sort(sortItems).map(taskRow).join('')+'</div>';
     }
-    // 하단: 초기화
-    if(data.tasks.length){
-      html+='<div class="mt-8 border-t border-slate-100 pt-4 text-center"><button data-act="reset" class="text-xs text-slate-400 underline transition hover:text-red-500">전체 삭제 · 초기화</button></div>';
-    }
-    html+='</main>';
-    app.innerHTML=html;
+
+    html+='<div class="mt-8 border-t border-slate-100 pt-4 text-center"><button data-act="reset" class="text-xs text-slate-400 underline transition hover:text-red-500">전체 삭제 · 초기화</button></div>';
+    return html;
   }
-  function chipCls(active){ return 'flex items-center gap-1 rounded-full border px-3 py-1.5 text-xs font-medium transition '+(active?'border-brand-600 bg-brand-600 text-white':'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'); }
 
   // ===== 할일 상세/편집 모달 =====
   function openTaskModal(id){
-    var t = id ? byId(id) : { id:'', title:'', horizon:'today', area:'', priority:'none', recur:'none', due:'' };
+    var t = id ? byId(id) : { id:'', title:'', horizon:defHorizon(), area:(state.view.indexOf('area:')===0?state.view.slice(5):''), priority:'none', recur:'none', due:'' };
     if(id && !t) return;
     var isNew = !id;
     function sel(name, obj, cur){ return Object.keys(obj).map(function(k){ return '<option value="'+k+'"'+(cur===k?' selected':'')+'>'+(obj[k].label||obj[k])+'</option>'; }).join(''); }
@@ -319,7 +335,7 @@
     else if(act==='toggle'){ toggleTask(el.getAttribute('data-id')); render(); }
     else if(act==='del'){ deleteTask(el.getAttribute('data-id')); render(); }
     else if(act==='del-modal'){ deleteTask(el.getAttribute('data-id')); closeModal(); render(); }
-    else if(act==='area'){ state.area=el.getAttribute('data-area'); render(); }
+    else if(act==='nav'){ state.view=el.getAttribute('data-view'); render(); }
     else if(act==='closeday'){ openCloseDay(); }
     else if(act==='cd-finish'){ closeModal(); render(); }
     else if(act==='dismiss-roll'){ state.rollInfo=null; render(); }
@@ -334,9 +350,7 @@
   });
   document.addEventListener('submit', function(e){
     var qa=e.target.closest('#quickadd');
-    if(qa){ e.preventDefault(); var v=qa.q.value.trim(); if(!v) return; addTask(v,{horizon:'today'}); qa.q.value=''; render(); return; }
-    var ah=e.target.closest('form[data-act="addhere"]');
-    if(ah){ e.preventDefault(); var t=ah.title.value.trim(); if(!t) return; addTask(t,{horizon:ah.getAttribute('data-h')}); render(); }
+    if(qa){ e.preventDefault(); var v=qa.q.value.trim(); if(!v) return; addTask(v,{horizon: qa.getAttribute('data-h')||'today'}); qa.q.value=''; render(); }
   });
 
   // ===== 시작 =====
