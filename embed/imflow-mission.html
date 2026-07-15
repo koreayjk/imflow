@@ -240,6 +240,10 @@
         '</section>';
       });
     }
+    // 하단: 초기화
+    if(data.tasks.length){
+      html+='<div class="mt-8 border-t border-slate-100 pt-4 text-center"><button data-act="reset" class="text-xs text-slate-400 underline transition hover:text-red-500">전체 삭제 · 초기화</button></div>';
+    }
     html+='</main>';
     app.innerHTML=html;
   }
@@ -309,6 +313,7 @@
     var act=el.getAttribute('data-act');
     if(act==='notify') toggleNotify();
     else if(act==='seed'){ seedSample(); render(); }
+    else if(act==='reset'){ if(confirm('모든 할 일을 삭제하고 초기화할까요? (되돌릴 수 없어요)')){ data.tasks=[]; data.lastRoll=todayStr(); state.area='all'; state.rollInfo=null; save(); render(); } }
     else if(act==='newfull'){ openTaskModal(null); }
     else if(act==='edit'){ openTaskModal(el.getAttribute('data-id')); }
     else if(act==='toggle'){ toggleTask(el.getAttribute('data-id')); render(); }
