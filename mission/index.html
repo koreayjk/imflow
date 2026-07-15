@@ -122,14 +122,16 @@
   function areas(){ var s={}; data.tasks.forEach(function(t){ if(t.area) s[t.area]=1; }); return Object.keys(s).sort(); }
 
   function seedSample(){
-    addTask('새벽기도 인도',{horizon:'today',recur:'daily',area:'예배',priority:'important'});
-    addTask('청년부 심방 (김형제)',{horizon:'today',area:'심방'});
-    addTask('주보 편집',{horizon:'today',area:'행정',priority:'urgent'});
-    addTask('선교 후원 편지 발송',{horizon:'week',area:'행정'});
-    addTask('제자훈련 교재 준비',{horizon:'week',recur:'weekly',area:'양육'});
-    addTask('월말 사역 보고서',{horizon:'month',area:'행정',recur:'monthly'});
-    addTask('현지 언어 공부',{horizon:'someday',area:'훈련'});
-    addTask('교회 청소 봉사자 모집',{horizon:'someday'});
+    addTask('1교시 영어 수업',{horizon:'today',recur:'daily',area:'수업',priority:'important'});
+    addTask('학생 상담 (이OO)',{horizon:'today',area:'상담'});
+    addTask('출석부 정리',{horizon:'today',area:'행정',priority:'urgent'});
+    addTask('중간고사 문제 출제',{horizon:'week',area:'학사'});
+    addTask('주간 수업계획서 작성',{horizon:'week',recur:'weekly',area:'수업'});
+    addTask('학부모 상담 일정 잡기',{horizon:'week',area:'상담'});
+    addTask('월간 학사 보고서',{horizon:'month',area:'행정',recur:'monthly'});
+    addTask('학생 성적 입력',{horizon:'month',area:'학사'});
+    addTask('방과후 프로그램 기획',{horizon:'someday',area:'기획'});
+    addTask('교실 도서 자료 정리',{horizon:'someday'});
     // 예시로 하나는 밀린 상태
     var t=data.tasks[1]; if(t){ t.carry=2; }
     save();
@@ -195,7 +197,7 @@
     var html=topbar()+'<main class="mx-auto max-w-2xl px-4 py-6">';
 
     // 헤더 + 하루 마감
-    html+='<div class="mb-4 flex items-center justify-between"><div><h1 class="text-xl font-bold">사역 할일</h1>'+
+    html+='<div class="mb-4 flex items-center justify-between"><div><h1 class="text-xl font-bold">할 일</h1>'+
       '<p class="text-sm text-slate-500">오늘 '+todayDone+'/'+todayTotal+' 완료'+(overdue?' · <span class="font-semibold text-red-600">밀린 일 '+overdue+'개</span>':'')+'</p></div>'+
       '<button data-act="closeday" class="flex items-center gap-1.5 rounded-lg bg-slate-800 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-slate-900">'+icon('moon','h-4 w-4')+'<span class="hidden sm:inline">하루 마감</span></button></div>';
 
@@ -254,12 +256,12 @@
     root.innerHTML='<div data-act="mbg" class="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 sm:items-center sm:p-4"><div data-stop="1" class="w-full max-w-md rounded-t-2xl bg-white p-6 shadow-xl sm:rounded-2xl">'+
       '<div class="mb-4 flex items-center justify-between"><h2 class="text-lg font-bold">'+(isNew?'새 할 일':'할 일')+'</h2><button data-act="mclose" class="rounded-lg p-1 text-slate-400 hover:bg-slate-100">✕</button></div>'+
       '<form id="task-form" class="space-y-4">'+
-        '<div><label class="mb-1.5 block text-sm font-medium text-slate-700">할 일</label><input name="title" required maxlength="200" value="'+esc(t.title)+'" placeholder="예) 청년부 심방" class="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100" /></div>'+
+        '<div><label class="mb-1.5 block text-sm font-medium text-slate-700">할 일</label><input name="title" required maxlength="200" value="'+esc(t.title)+'" placeholder="예) 학생 상담" class="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100" /></div>'+
         '<div class="grid grid-cols-2 gap-3"><div><label class="mb-1.5 block text-sm font-medium text-slate-700">언제</label><select name="horizon" class="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-brand-500">'+selH(t.horizon)+'</select></div>'+
-        '<div><label class="mb-1.5 block text-sm font-medium text-slate-700">영역</label><input name="area" list="area-list" maxlength="20" value="'+esc(t.area)+'" placeholder="예) 예배·양육·심방·행정" class="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-brand-500" /><datalist id="area-list">'+areas().map(function(a){return '<option value="'+esc(a)+'">';}).join('')+'</datalist></div></div>'+
+        '<div><label class="mb-1.5 block text-sm font-medium text-slate-700">영역</label><input name="area" list="area-list" maxlength="20" value="'+esc(t.area)+'" placeholder="예) 수업·상담·행정·학사" class="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-brand-500" /><datalist id="area-list">'+areas().map(function(a){return '<option value="'+esc(a)+'">';}).join('')+'</datalist></div></div>'+
         '<div class="grid grid-cols-2 gap-3"><div><label class="mb-1.5 block text-sm font-medium text-slate-700">우선순위</label><select name="priority" class="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-brand-500">'+sel('priority',PRIORITIES,t.priority)+'</select></div>'+
         '<div><label class="mb-1.5 block text-sm font-medium text-slate-700">주기</label><select name="recur" class="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-brand-500"><option value="none"'+(t.recur==='none'?' selected':'')+'>주기 없음</option><option value="daily"'+(t.recur==='daily'?' selected':'')+'>매일</option><option value="weekly"'+(t.recur==='weekly'?' selected':'')+'>매주</option><option value="monthly"'+(t.recur==='monthly'?' selected':'')+'>매월</option></select></div></div>'+
-        '<p class="text-[11px] text-slate-400">주기를 정하면, 완료해도 다음 주기에 자동으로 다시 나타나요. (매일 새벽기도 같은 반복 사역에 좋아요)</p>'+
+        '<p class="text-[11px] text-slate-400">주기를 정하면, 완료해도 다음 주기에 자동으로 다시 나타나요. (매일 있는 수업이나 정기 업무에 좋아요)</p>'+
         '<div class="flex gap-2 pt-1">'+(isNew?'':'<button type="button" data-act="del-modal" data-id="'+t.id+'" class="rounded-lg border border-red-200 px-3 py-2.5 text-sm font-medium text-red-500 hover:bg-red-50">삭제</button>')+
         '<button type="submit" class="flex-1 rounded-lg bg-brand-600 py-2.5 text-sm font-semibold text-white hover:bg-brand-700">'+(isNew?'추가':'저장')+'</button></div>'+
       '</form></div></div>';
