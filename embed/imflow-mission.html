@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>IM Flow · 선교 사역 관리</title>
+  <meta name="description" content="선교사님을 위한 오늘·이번주·이번달 할일 관리 — 밀리지 않고, 까먹지 않게" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    if (window.tailwind) tailwind.config = {
+      theme: { extend: {
+        colors: { brand: {50:'#eef4ff',100:'#d9e6ff',200:'#bcd3ff',300:'#8eb6ff',400:'#598dff',500:'#3b6bf6',600:'#244eeb',700:'#1d3dd8',800:'#1e34af',900:'#1e328a'} },
+        fontFamily: { sans: ['Pretendard','-apple-system','BlinkMacSystemFont','system-ui','sans-serif'] }
+      } }
+    }
+  </script>
+  <style>
+    body { font-family:'Pretendard',-apple-system,BlinkMacSystemFont,system-ui,sans-serif; }
+    ::-webkit-scrollbar { height:8px; width:8px; } ::-webkit-scrollbar-thumb { background:#cbd5e1; border-radius:8px; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900">
+  <div id="app"></div>
+  <div id="modal-root"></div>
+<script>
+(function(){
+  'use strict';
+
+  // ===== 설정(임베드용) =====
+  var CFG = (typeof window!=='undefined' && window.IMFLOW_CONFIG) ? window.IMFLOW_CONFIG : {};
+  try { var qs=new URLSearchParams(location.search); if(qs.get('storageKey')) CFG.storageKey=qs.get('storageKey'); if(qs.get('header')==='0') CFG.showHeader=false; } catch(e){}
+  var SHOW_HEADER = CFG.showHeader !== false;
+  var STORE_KEY = CFG.storageKey || 'imflow_mission_v1';
+  var NOTIFY_KEY = STORE_KEY + '_notify';
+
+  // ===== 상수 =====
+  var HORIZONS = [
+    { key:'today',   label:'오늘',   dot:'bg-brand-500',   hint:'오늘 안에 할 일' },
+    { key:'week',    label:'이번 주', dot:'bg-emerald-500', hint:'이번 주 안에' },
+    { key:'month',   label:'이번 달', dot:'bg-amber-500',   hint:'이번 달 안에' },
+    { key:'someday', label:'언젠가',  dot:'bg-slate-400',   hint:'마감 없음 · 나중에' }
+  ];
+  var H_KEYS = HORIZONS.map(function(h){return h.key;});
+  function hMeta(k){ return HORIZONS.filter(function(h){return h.key===k;})[0]||HORIZONS[0]; }
+  var PRIORITIES = { none:{label:'보통',chip:''}, important:{label:'중요',chip:'bg-amber-50 text-amber-600'}, urgent:{label:'급함',chip:'bg-red-50 text-red-600'} };
+  var P_RANK = { urgent:0, important:1, none:2 };
+  var RECURS = { none:'주기 없음', daily:'매일', weekly:'매주', monthly:'매월' };
+
+  // ===== 저장소 =====
+  var data = load();
+  var notifyOn = (function(){ try{ return localStorage.getItem(NOTIFY_KEY)==='1'; }catch(e){ return false; } })();
+  function load(){
+    var d={ tasks:[], lastRoll:'' };
+    try{ var raw=localStorage.getItem(STORE_KEY); if(raw) d=JSON.parse(raw); }catch(e){}
+    if(!d.tasks) d.tasks=[];
+    d.tasks.forEach(function(t){
+      if(t.horizon===undefined) t.horizon='today';
+      if(t.area===undefined) t.area='';
+      if(t.priority===undefined) t.priority='none';
+      if(t.recur===undefined) t.recur='none';
+      if(t.due===undefined) t.due='';
+      if(t.done===undefined) t.done=false;
+      if(t.doneDate===undefined) t.doneDate='';
+      if(t.carry===undefined) t.carry=0;
+    });
+    return d;
+  }
+  function save(){ try{ localStorage.setItem(STORE_KEY, JSON.stringify(data)); }catch(e){} }
+  function uid(){ return 'id-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,8); }
+
+  // ===== 날짜 =====
+  function pad(n){ return (n<10?'0':'')+n; }
+  function todayStr(){ var d=new Date(); return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()); }
+  function daysBetween(a,b){ return Math.round((new Date(b+'T00:00:00')-new Date(a+'T00:00:00'))/86400000); }
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+
+  // ===== 상태 =====
+  var state = { area:'all', rollInfo:null };
+
+  // ===== 하루 넘김(자동) =====
+  function rollIfNewDay(){
+    var today=todayStr();
+    if(!data.lastRoll){ data.lastRoll=today; save(); return null; }
+    if(data.lastRoll>=today) return null;
+    var gap=daysBetween(data.lastRoll,today);
+    var carried=0, revived=0;
+    data.tasks.forEach(function(t){
+      // 주기 할일: 주기가 지났으면 다시 살림
+      if(t.recur!=='none' && t.done && t.doneDate){
+        if(recurDue(t,today)){ t.done=false; t.doneDate=''; t.carry=0; if(t.horizon!=='today') t.horizon='today'; revived++; }
+      }
+      // 오늘 미완료 → 밀림(다음날로 넘어감)
+      if(t.horizon==='today' && !t.done){ t.carry=(t.carry||0)+gap; carried++; }
+    });
+    data.lastRoll=today; save();
+    return { carried:carried, revived:revived };
+  }
+  function recurDue(t, today){
+    if(!t.doneDate) return true;
+    if(t.recur==='daily') return t.doneDate < today;
+    if(t.recur==='weekly') return daysBetween(t.doneDate,today) >= 7;
+    if(t.recur==='monthly') return t.doneDate.slice(0,7) !== today.slice(0,7);
+    return false;
+  }
+
+  // ===== 조작 =====
+  function addTask(title, opts){
+    opts=opts||{};
+    data.tasks.push({ id:uid(), title:title, horizon:opts.horizon||'today', area:opts.area||'', priority:opts.priority||'none', recur:opts.recur||'none', due:opts.due||'', done:false, doneDate:'', carry:0, createdAt:new Date().toISOString() });
+    save();
+  }
+  function updateTask(id,f){ var t=byId(id); if(t){ for(var k in f) t[k]=f[k]; save(); } }
+  function toggleTask(id){
+    var t=byId(id); if(!t) return;
+    t.done=!t.done; t.doneDate = t.done ? todayStr() : '';
+    if(t.done) t.carry=0;
+    save();
+  }
+  function deleteTask(id){ data.tasks=data.tasks.filter(function(t){return t.id!==id;}); save(); }
+  function byId(id){ return data.tasks.filter(function(t){return t.id===id;})[0]; }
+  function areas(){ var s={}; data.tasks.forEach(function(t){ if(t.area) s[t.area]=1; }); return Object.keys(s).sort(); }
+
+  function seedSample(){
+    addTask('새벽기도 인도',{horizon:'today',recur:'daily',area:'예배',priority:'important'});
+    addTask('청년부 심방 (김형제)',{horizon:'today',area:'심방'});
+    addTask('주보 편집',{horizon:'today',area:'행정',priority:'urgent'});
+    addTask('선교 후원 편지 발송',{horizon:'week',area:'행정'});
+    addTask('제자훈련 교재 준비',{horizon:'week',recur:'weekly',area:'양육'});
+    addTask('월말 사역 보고서',{horizon:'month',area:'행정',recur:'monthly'});
+    addTask('현지 언어 공부',{horizon:'someday',area:'훈련'});
+    addTask('교회 청소 봉사자 모집',{horizon:'someday'});
+    // 예시로 하나는 밀린 상태
+    var t=data.tasks[1]; if(t){ t.carry=2; }
+    save();
+  }
+
+  // ===== 아이콘 =====
+  function icon(name,cls){
+    cls=cls||'h-4 w-4';
+    var p={
+      plus:'<path d="M12 5v14M5 12h14"/>', check:'<path d="M20 6L9 17l-5-5"/>',
+      trash:'<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/>', flag:'<path d="M4 21V4h13l-2 4 2 4H4"/>',
+      repeat:'<path d="M17 2l4 4-4 4"/><path d="M3 11V9a4 4 0 014-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a4 4 0 01-4 4H3"/>',
+      sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/>',
+      bell:'<path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 01-3.4 0"/>',
+      bellOff:'<path d="M8.7 3A6 6 0 0118 8c0 2 .3 3.6.8 4.9M18 8c0 7 3 9 3 9M3 3l18 18M6 8c0 7-3 9-3 9h13M13.7 21a2 2 0 01-3.4 0"/>',
+      moon:'<path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"/>', tag:'<path d="M20 10l-8 8-9-9V3h6z"/><circle cx="7" cy="7" r="1.5"/>',
+      alert:'<path d="M12 9v4M12 17h.01M10.3 3.9l-8 14A2 2 0 004 21h16a2 2 0 001.7-3l-8-14a2 2 0 00-3.4 0z"/>'
+    };
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="'+cls+'">'+(p[name]||'')+'</svg>';
+  }
+
+  // ===== 상단바 =====
+  function topbar(){
+    if(!SHOW_HEADER) return '';
+    var bell = notifyOn && typeof Notification!=='undefined' && Notification.permission==='granted';
+    return '<header class="sticky top-0 z-10 border-b border-slate-200 bg-white/90 backdrop-blur"><div class="mx-auto flex h-14 max-w-2xl items-center justify-between px-4">'+
+      '<div class="flex items-center gap-2"><span class="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600 text-white">'+icon('sun','h-5 w-5')+'</span><span class="text-lg font-bold">IM Flow <span class="text-sm font-medium text-slate-400">선교</span></span></div>'+
+      '<button data-act="notify" class="flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs '+(bell?'text-brand-600':'text-slate-400')+' hover:bg-slate-100">'+icon(bell?'bell':'bellOff','h-4 w-4')+'<span class="hidden sm:inline">'+(bell?'알림 켜짐':'알림')+'</span></button>'+
+      '</div></header>';
+  }
+
+  // ===== 할일 칩 =====
+  function chips(t){
+    var out=[];
+    if(t.carry>0) out.push('<span class="inline-flex items-center gap-1 rounded-md bg-red-100 px-1.5 py-0.5 text-[11px] font-bold text-red-600">'+icon('alert','h-3 w-3')+'밀림 '+t.carry+'일</span>');
+    if(t.priority!=='none') out.push('<span class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium '+PRIORITIES[t.priority].chip+'">'+icon('flag','h-3 w-3')+PRIORITIES[t.priority].label+'</span>');
+    if(t.recur!=='none') out.push('<span class="inline-flex items-center gap-1 rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-500">'+icon('repeat','h-3 w-3')+RECURS[t.recur]+'</span>');
+    if(t.area) out.push('<span class="inline-flex items-center gap-1 rounded-md bg-brand-50 px-1.5 py-0.5 text-[11px] font-medium text-brand-600">'+icon('tag','h-3 w-3')+esc(t.area)+'</span>');
+    if(!out.length) return '';
+    return '<div class="mt-1.5 flex flex-wrap items-center gap-1 pl-7">'+out.join('')+'</div>';
+  }
+
+  function taskRow(t){
+    return '<div class="group rounded-lg border '+(t.carry>0?'border-red-200 bg-red-50/40':'border-slate-200 bg-white')+' px-2.5 py-2">'+
+      '<div class="flex items-center gap-2">'+
+      '<button data-act="toggle" data-id="'+t.id+'" class="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition '+(t.done?'border-emerald-500 bg-emerald-500 text-white':'border-slate-300 text-transparent hover:border-brand-400')+'">'+icon('check','h-3.5 w-3.5')+'</button>'+
+      '<button data-act="edit" data-id="'+t.id+'" class="flex-1 text-left text-sm '+(t.done?'text-slate-400 line-through':'text-slate-700')+'">'+esc(t.title)+'</button>'+
+      '<select data-act="move" data-id="'+t.id+'" class="shrink-0 rounded-md border border-slate-200 bg-white px-1.5 py-1 text-[11px] text-slate-500 outline-none sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100">'+
+        H_KEYS.map(function(k){ return '<option value="'+k+'"'+(t.horizon===k?' selected':'')+'>'+hMeta(k).label+'</option>'; }).join('')+'</select>'+
+      '<button data-act="del" data-id="'+t.id+'" class="shrink-0 rounded p-1 text-slate-300 transition hover:bg-red-50 hover:text-red-500 sm:opacity-0 sm:group-hover:opacity-100">'+icon('trash')+'</button>'+
+      '</div>'+chips(t)+'</div>';
+  }
+
+  // ===== 렌더 =====
+  function render(){
+    var app=document.getElementById('app');
+    var today=todayStr();
+    var openTasks=data.tasks.filter(function(t){return !t.done;});
+    var overdue=data.tasks.filter(function(t){return !t.done && t.carry>0;}).length;
+    var todayTotal=data.tasks.filter(function(t){return t.horizon==='today';}).length;
+    var todayDone=data.tasks.filter(function(t){return t.horizon==='today'&&t.done;}).length;
+
+    var html=topbar()+'<main class="mx-auto max-w-2xl px-4 py-6">';
+
+    // 헤더 + 하루 마감
+    html+='<div class="mb-4 flex items-center justify-between"><div><h1 class="text-xl font-bold">사역 할일</h1>'+
+      '<p class="text-sm text-slate-500">오늘 '+todayDone+'/'+todayTotal+' 완료'+(overdue?' · <span class="font-semibold text-red-600">밀린 일 '+overdue+'개</span>':'')+'</p></div>'+
+      '<button data-act="closeday" class="flex items-center gap-1.5 rounded-lg bg-slate-800 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-slate-900">'+icon('moon','h-4 w-4')+'<span class="hidden sm:inline">하루 마감</span></button></div>';
+
+    // 빠른 추가
+    html+='<form id="quickadd" class="mb-4 flex items-center gap-2"><div class="relative flex-1">'+icon('plus','h-4 w-4 text-slate-400 pointer-events-none absolute left-3 top-1/2 -translate-y-1/2')+
+      '<input name="q" placeholder="오늘 할 일 빠르게 추가..." class="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-100" /></div>'+
+      '<button type="button" data-act="newfull" class="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50">상세</button></form>';
+
+    // 자동 넘김 배너
+    if(state.rollInfo && (state.rollInfo.carried||state.rollInfo.revived)){
+      html+='<div class="mb-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">'+icon('alert','h-4 w-4 mt-0.5 text-amber-500')+
+        '<div>'+(state.rollInfo.carried?'어제 못 끝낸 <b>'+state.rollInfo.carried+'개</b>가 오늘로 넘어왔어요(밀림). ':'')+
+        (state.rollInfo.revived?'<b>'+state.rollInfo.revived+'개</b>의 주기 할일이 다시 올라왔어요.':'')+'</div>'+
+        '<button data-act="dismiss-roll" class="ml-auto text-amber-500 hover:text-amber-700">✕</button></div>';
+    }
+
+    // 밀린 할일이 없을 때가 없더라도, 데이터 없으면 안내
+    if(data.tasks.length===0){
+      html+='<div class="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white py-16 text-center">'+
+        '<span class="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-50 text-brand-500">'+icon('sun','h-7 w-7')+'</span>'+
+        '<h3 class="text-base font-semibold">오늘부터 시작해요</h3><p class="mt-1 mb-5 text-sm text-slate-500">위에 할 일을 적거나, 예시를 둘러보세요.</p>'+
+        '<button data-act="seed" class="rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50">예시로 둘러보기</button></div>';
+    } else {
+      // 영역 필터
+      var ars=areas();
+      if(ars.length){
+        html+='<div class="mb-4 flex flex-wrap items-center gap-2"><button data-act="area" data-area="all" class="'+chipCls(state.area==='all')+'">전체</button>'+
+          ars.map(function(a){ return '<button data-act="area" data-area="'+esc(a)+'" class="'+chipCls(state.area===a)+'">'+icon('tag','h-3 w-3')+esc(a)+'</button>'; }).join('')+'</div>';
+      }
+      // 지평별 섹션
+      HORIZONS.forEach(function(h){
+        var items=data.tasks.filter(function(t){ return t.horizon===h.key && (state.area==='all'||t.area===state.area); });
+        items.sort(function(a,b){ if(a.done!==b.done) return a.done?1:-1; if((b.carry||0)!==(a.carry||0)) return (b.carry||0)-(a.carry||0); return P_RANK[a.priority]-P_RANK[b.priority]; });
+        html+='<section class="mb-4">'+
+          '<div class="mb-2 flex items-center gap-2"><span class="h-2.5 w-2.5 rounded-full '+h.dot+'"></span><h2 class="text-sm font-bold text-slate-700">'+h.label+'</h2>'+
+          '<span class="text-xs text-slate-400">'+items.length+'</span><span class="ml-auto text-[11px] text-slate-400">'+h.hint+'</span></div>'+
+          '<div class="space-y-2">'+(items.length? items.map(taskRow).join('') : '<p class="rounded-lg border border-dashed border-slate-200 bg-white py-4 text-center text-xs text-slate-400">없음</p>')+'</div>'+
+          '<form data-act="addhere" data-h="'+h.key+'" class="mt-2 flex items-center gap-1.5"><input name="title" maxlength="200" placeholder="'+h.label+'에 추가..." class="flex-1 rounded-lg border border-transparent bg-white px-2.5 py-1.5 text-sm outline-none transition placeholder:text-slate-400 focus:border-brand-300 focus:ring-2 focus:ring-brand-100" />'+
+          '<button type="submit" class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-slate-400 hover:bg-brand-50 hover:text-brand-500">'+icon('plus')+'</button></form>'+
+        '</section>';
+      });
+    }
+    html+='</main>';
+    app.innerHTML=html;
+  }
+  function chipCls(active){ return 'flex items-center gap-1 rounded-full border px-3 py-1.5 text-xs font-medium transition '+(active?'border-brand-600 bg-brand-600 text-white':'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'); }
+
+  // ===== 할일 상세/편집 모달 =====
+  function openTaskModal(id){
+    var t = id ? byId(id) : { id:'', title:'', horizon:'today', area:'', priority:'none', recur:'none', due:'' };
+    if(id && !t) return;
+    var isNew = !id;
+    function sel(name, obj, cur){ return Object.keys(obj).map(function(k){ return '<option value="'+k+'"'+(cur===k?' selected':'')+'>'+(obj[k].label||obj[k])+'</option>'; }).join(''); }
+    function selH(cur){ return HORIZONS.map(function(h){ return '<option value="'+h.key+'"'+(cur===h.key?' selected':'')+'>'+h.label+'</option>'; }).join(''); }
+    var root=document.getElementById('modal-root');
+    root.innerHTML='<div data-act="mbg" class="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 sm:items-center sm:p-4"><div data-stop="1" class="w-full max-w-md rounded-t-2xl bg-white p-6 shadow-xl sm:rounded-2xl">'+
+      '<div class="mb-4 flex items-center justify-between"><h2 class="text-lg font-bold">'+(isNew?'새 할 일':'할 일')+'</h2><button data-act="mclose" class="rounded-lg p-1 text-slate-400 hover:bg-slate-100">✕</button></div>'+
+      '<form id="task-form" class="space-y-4">'+
+        '<div><label class="mb-1.5 block text-sm font-medium text-slate-700">할 일</label><input name="title" required maxlength="200" value="'+esc(t.title)+'" placeholder="예) 청년부 심방" class="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100" /></div>'+
+        '<div class="grid grid-cols-2 gap-3"><div><label class="mb-1.5 block text-sm font-medium text-slate-700">언제</label><select name="horizon" class="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-brand-500">'+selH(t.horizon)+'</select></div>'+
+        '<div><label class="mb-1.5 block text-sm font-medium text-slate-700">영역</label><input name="area" list="area-list" maxlength="20" value="'+esc(t.area)+'" placeholder="예) 예배·양육·심방·행정" class="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-brand-500" /><datalist id="area-list">'+areas().map(function(a){return '<option value="'+esc(a)+'">';}).join('')+'</datalist></div></div>'+
+        '<div class="grid grid-cols-2 gap-3"><div><label class="mb-1.5 block text-sm font-medium text-slate-700">우선순위</label><select name="priority" class="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-brand-500">'+sel('priority',PRIORITIES,t.priority)+'</select></div>'+
+        '<div><label class="mb-1.5 block text-sm font-medium text-slate-700">주기</label><select name="recur" class="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-brand-500"><option value="none"'+(t.recur==='none'?' selected':'')+'>주기 없음</option><option value="daily"'+(t.recur==='daily'?' selected':'')+'>매일</option><option value="weekly"'+(t.recur==='weekly'?' selected':'')+'>매주</option><option value="monthly"'+(t.recur==='monthly'?' selected':'')+'>매월</option></select></div></div>'+
+        '<p class="text-[11px] text-slate-400">주기를 정하면, 완료해도 다음 주기에 자동으로 다시 나타나요. (매일 새벽기도 같은 반복 사역에 좋아요)</p>'+
+        '<div class="flex gap-2 pt-1">'+(isNew?'':'<button type="button" data-act="del-modal" data-id="'+t.id+'" class="rounded-lg border border-red-200 px-3 py-2.5 text-sm font-medium text-red-500 hover:bg-red-50">삭제</button>')+
+        '<button type="submit" class="flex-1 rounded-lg bg-brand-600 py-2.5 text-sm font-semibold text-white hover:bg-brand-700">'+(isNew?'추가':'저장')+'</button></div>'+
+      '</form></div></div>';
+    var i=root.querySelector('input[name=title]'); if(i) i.focus();
+    root.querySelector('#task-form').addEventListener('submit', function(e){
+      e.preventDefault(); var f=e.target; var title=f.title.value.trim(); if(!title) return;
+      var payload={ title:title, horizon:f.horizon.value, area:f.area.value.trim(), priority:f.priority.value, recur:f.recur.value };
+      if(isNew) addTask(title,payload); else updateTask(t.id,payload);
+      closeModal(); render();
+    });
+  }
+
+  // ===== 하루 마감 모달 =====
+  function openCloseDay(){
+    var items=data.tasks.filter(function(t){return t.horizon==='today';});
+    var pending=items.filter(function(t){return !t.done;});
+    var doneN=items.length-pending.length;
+    var root=document.getElementById('modal-root');
+    var rows = items.length===0 ? '<p class="py-4 text-center text-sm text-slate-400">오늘 할 일이 없어요.</p>'
+      : items.map(function(t){
+          return '<label class="flex items-center gap-2.5 rounded-lg border border-slate-200 px-3 py-2"><input type="checkbox" data-act="cd-toggle" data-id="'+t.id+'" '+(t.done?'checked':'')+' class="h-4 w-4 rounded" />'+
+            '<span class="flex-1 text-sm '+(t.done?'text-slate-400 line-through':'text-slate-700')+'">'+esc(t.title)+'</span>'+(t.carry>0?'<span class="text-[11px] font-bold text-red-500">밀림 '+t.carry+'일</span>':'')+'</label>';
+        }).join('');
+    root.innerHTML='<div data-act="mbg" class="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 sm:items-center sm:p-4"><div data-stop="1" class="flex max-h-[85vh] w-full max-w-md flex-col rounded-t-2xl bg-white p-6 shadow-xl sm:rounded-2xl">'+
+      '<div class="mb-1 flex items-center justify-between"><h2 class="flex items-center gap-2 text-lg font-bold">'+icon('moon','h-5 w-5 text-slate-700')+'하루 마감</h2><button data-act="mclose" class="rounded-lg p-1 text-slate-400 hover:bg-slate-100">✕</button></div>'+
+      '<p class="mb-3 text-sm text-slate-500">오늘 한 일을 체크하세요. 남은 일은 <b class="text-red-600">내일로 넘어가며 "밀림"</b>으로 표시됩니다.</p>'+
+      '<div id="cd-list" class="mb-4 flex-1 space-y-2 overflow-y-auto">'+rows+'</div>'+
+      '<div class="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">완료 <b class="text-emerald-600">'+doneN+'</b> · 남음 <b class="text-red-600">'+pending.length+'</b></div>'+
+      '<button data-act="cd-finish" class="mt-3 w-full rounded-lg bg-slate-800 py-2.5 text-sm font-semibold text-white hover:bg-slate-900">마감하기</button>'+
+      '</div></div>';
+  }
+
+  function closeModal(){ document.getElementById('modal-root').innerHTML=''; }
+
+  // ===== 알림 =====
+  function toggleNotify(){
+    if(typeof Notification==='undefined'){ alert('이 브라우저는 알림을 지원하지 않아요.'); return; }
+    if(notifyOn){ notifyOn=false; try{localStorage.setItem(NOTIFY_KEY,'0');}catch(e){} render(); return; }
+    Notification.requestPermission().then(function(p){ if(p==='granted'){ notifyOn=true; try{localStorage.setItem(NOTIFY_KEY,'1');}catch(e){} } else alert('브라우저 설정에서 알림을 허용해 주세요.'); render(); });
+  }
+
+  // ===== 이벤트 =====
+  document.addEventListener('click', function(e){
+    var el=e.target.closest('[data-act]'); if(!el) return;
+    var act=el.getAttribute('data-act');
+    if(act==='notify') toggleNotify();
+    else if(act==='seed'){ seedSample(); render(); }
+    else if(act==='newfull'){ openTaskModal(null); }
+    else if(act==='edit'){ openTaskModal(el.getAttribute('data-id')); }
+    else if(act==='toggle'){ toggleTask(el.getAttribute('data-id')); render(); }
+    else if(act==='del'){ deleteTask(el.getAttribute('data-id')); render(); }
+    else if(act==='del-modal'){ deleteTask(el.getAttribute('data-id')); closeModal(); render(); }
+    else if(act==='area'){ state.area=el.getAttribute('data-area'); render(); }
+    else if(act==='closeday'){ openCloseDay(); }
+    else if(act==='cd-finish'){ closeModal(); render(); }
+    else if(act==='dismiss-roll'){ state.rollInfo=null; render(); }
+    else if(act==='mclose'){ closeModal(); }
+    else if(act==='mbg'){ if(!e.target.closest('[data-stop]')) closeModal(); }
+  });
+  document.addEventListener('change', function(e){
+    var el=e.target.closest('[data-act]'); if(!el) return;
+    var act=el.getAttribute('data-act');
+    if(act==='move'){ updateTask(el.getAttribute('data-id'), { horizon: el.value }); render(); }
+    else if(act==='cd-toggle'){ toggleTask(el.getAttribute('data-id')); }
+  });
+  document.addEventListener('submit', function(e){
+    var qa=e.target.closest('#quickadd');
+    if(qa){ e.preventDefault(); var v=qa.q.value.trim(); if(!v) return; addTask(v,{horizon:'today'}); qa.q.value=''; render(); return; }
+    var ah=e.target.closest('form[data-act="addhere"]');
+    if(ah){ e.preventDefault(); var t=ah.title.value.trim(); if(!t) return; addTask(t,{horizon:ah.getAttribute('data-h')}); render(); }
+  });
+
+  // ===== 시작 =====
+  state.rollInfo = rollIfNewDay();
+  render();
+})();
+</script>
+</body>
+</html>
