@@ -109,6 +109,22 @@
     if(nd && t.recur!=='none'){ var step=t.recur==='daily'?1:t.recur==='weekly'?7:30; var nrow={user_id:session.user.id,title:t.title,horizon:t.horizon,category:t.category,area:t.area,priority:t.priority,recur:t.recur,done:false,carry:0}; var ir=await sb.from('mf_tasks').insert(nrow).select().single(); if(ir.data) tasks.push(ir.data); }
     renderApp(); await sb.from('mf_tasks').update(f).eq('id',id); }
   async function delTask(id){ tasks=tasks.filter(function(t){return t.id!==id;}); renderApp(); await sb.from('mf_tasks').delete().eq('id',id); }
+  async function seedCloud(){
+    var uid=session.user.id;
+    var S=[
+      ['1교시 영어 수업','today','교육사역','수업관리','daily','important'],
+      ['학생 상담 (이OO)','today','교육사역','학생관리','none','none'],
+      ['출석부 정리','today','교육사역','교육행정','none','urgent'],
+      ['중간고사 문제 출제','week','교육사역','학사일정','none','none'],
+      ['주간 수업계획서 작성','week','교육사역','수업관리','weekly','none'],
+      ['학부모 상담 일정 잡기','week','교육사역','학생관리','none','none'],
+      ['월간 학사 보고서','month','교육사역','교육행정','monthly','none'],
+      ['온택 수업 준비','week','전략선교','온택','none','none'],
+      ['방과후 프로그램 기획','someday','교육사역','개발','none','none']
+    ].map(function(a){ return {user_id:uid,title:a[0],horizon:a[1],category:a[2],area:a[3],recur:a[4],priority:a[5],done:false,carry:0}; });
+    var r=await sb.from('mf_tasks').insert(S).select();
+    if(r.data){ tasks=tasks.concat(r.data); renderApp(); } else alert('예시 넣기 실패: '+(r.error&&r.error.message||''));
+  }
 
   // ===== 로그인 화면 =====
   function renderLogin(){
@@ -187,6 +203,15 @@
   }
   function content(){
     if(busy && !tasks.length) return '<p class="py-20 text-center text-sm text-slate-400">불러오는 중...</p>';
+    if(tasks.length===0){
+      if(readonly) return '<div class="rounded-2xl border border-dashed border-slate-300 bg-white py-16 text-center text-sm text-slate-400">이 선교사는 아직 등록한 할일이 없어요.</div>';
+      return '<div class="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white py-16 text-center">'+
+        '<span class="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-50 text-brand-500">'+icon('sun','h-7 w-7')+'</span>'+
+        '<h3 class="text-base font-semibold">아직 할 일이 없어요</h3>'+
+        '<p class="mt-1 mb-5 max-w-xs text-sm text-slate-500">여기는 클라우드에 저장되는 실제 내 공간이에요. 할 일을 추가하면 왼쪽에 <b>업무(영역)</b>가 자동으로 생겨요.</p>'+
+        '<div class="flex gap-2"><button data-act="newfull" class="rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700">새 할일</button>'+
+        '<button data-act="seed" class="rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50">예시 넣기</button></div></div>';
+    }
     var v=state.view, meta=viewMeta(v), items=itemsFor(v);
     var openN=items.filter(function(t){return !t.done;}).length, doneN=items.length-openN;
     var overdueAll=tasks.filter(function(t){return !t.done && t.carry>0;}).length;
@@ -261,6 +286,7 @@
     var el=e.target.closest('[data-act]'); if(!el) return; var act=el.getAttribute('data-act');
     if(act==='nav'){ state.view=el.getAttribute('data-view'); renderApp(); }
     else if(act==='newfull'){ openTaskModal(null); }
+    else if(act==='seed'){ seedCloud(); }
     else if(act==='edit'){ openTaskModal(el.getAttribute('data-id')); }
     else if(act==='toggle'){ toggleTask(el.getAttribute('data-id')); }
     else if(act==='del'){ delTask(el.getAttribute('data-id')); }
