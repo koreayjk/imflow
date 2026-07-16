@@ -29,8 +29,13 @@
   var RECURS={none:'주기 없음',daily:'매일',weekly:'매주',monthly:'매월'};
   var WD=['일','월','화','수','목','금','토'];
 
-  var session=null, profile=null, tasks=[], projects=[];
+  var session=null, profile=null, tasks=[], projects=[], members=[], projCache=[];
   var state={ date:'', cat:'all', listMode:'day', calMonth:'', projectId:null };
+  function myId(){ return session&&session.user?session.user.id:null; }
+  function memberName(id){ var m=members.filter(function(x){return x.id===id;})[0]; return m?(m.name||'-'):''; }
+  async function loadMembers(){ var r=await sb.from('mf_profiles').select('id,name,branch,role'); members=r.data||[]; }
+  function memberOptions(sel){ return members.map(function(m){ return '<option value="'+m.id+'"'+(sel===m.id?' selected':'')+'>'+esc(m.name||m.id.slice(0,6))+(m.id===myId()?' (나)':'')+'</option>'; }).join(''); }
+  function canEditTask(t){ return !readonly && (t.assignee_id===myId() || t.user_id===myId() || (profile&&profile.role==='director')); }
   var viewUser=null, viewProfile=null, readonly=false, dirData=null, busy=false;
 
   // ── 날짜 ──
@@ -48,7 +53,8 @@
   function mm(s){return new Date(s+'T00:00:00').getMonth()+1;}
   function fmtKDay(s){var d=new Date(s+'T00:00:00');var lbl=d.getFullYear()+'. '+(d.getMonth()+1)+'. '+d.getDate()+' ('+WD[d.getDay()]+')';if(s===todayStr())lbl='오늘 · '+lbl;else if(s===addDaysS(todayStr(),-1))lbl='어제 · '+lbl;else if(s===addDaysS(todayStr(),1))lbl='내일 · '+lbl;return lbl;}
   function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
-  function byId(id){return tasks.filter(function(t){return t.id===id;})[0];}
+  function byId(id){return tasks.filter(function(t){return t.id===id;})[0] || projCache.filter(function(t){return t.id===id;})[0];}
+  var projStats={};
   function cats(){var s={};tasks.forEach(function(t){if(t.category)s[t.category]=1;});return Object.keys(s).sort();}
   function catOk(t){return state.cat==='all'||t.category===state.cat;}
   function onDate(s){return tasks.filter(function(t){return t.due===s&&catOk(t);}).sort(sortItems);}
@@ -68,42 +74,45 @@
   // ── 부팅 ──
   sb.auth.onAuthStateChange(function(_e,s){session=s;if(!s){profile=null;viewUser=null;}route();});
   sb.auth.getSession().then(function(r){session=r.data.session;route();});
-  function route(){ state.date=state.date||todayStr(); state.calMonth=state.calMonth||todayStr(); if(!session){renderLogin();return;} ensureProfile().then(function(){ if(profile.role==='director'&&viewUser===null) showDirectorHome(); else showSelf(); }); }
+  function route(){ state.date=state.date||todayStr(); state.calMonth=state.calMonth||todayStr(); if(!session){renderLogin();return;} ensureProfile().then(function(){ return loadMembers(); }).then(function(){ if(profile.role==='director'&&viewUser===null) showDirectorHome(); else showSelf(); }); }
   async function ensureProfile(){ var r=await sb.from('mf_profiles').select('*').eq('id',session.user.id).maybeSingle(); if(r.data){profile=r.data;return;} var name=(session.user.email||'').split('@')[0]; var ins=await sb.from('mf_profiles').insert({id:session.user.id,name:name,branch:'',role:'missionary'}).select().single(); profile=ins.data||{id:session.user.id,name:name,role:'missionary'}; }
 
   async function loadTasks(uid){
-    var r=await sb.from('mf_tasks').select('*').eq('user_id',uid).order('due',{ascending:true}); tasks=r.data||[];
-    var p=await sb.from('mf_projects').select('*').eq('owner_id',uid).order('created_at',{ascending:false}); projects=p.data||[];
+    var r=await sb.from('mf_tasks').select('*').eq('assignee_id',uid).order('due',{ascending:true}); tasks=r.data||[];
+    var p=await sb.from('mf_projects').select('*').order('created_at',{ascending:false}); projects=p.data||[];
+    var pt=await sb.from('mf_tasks').select('project_id,done'); projStats={}; (pt.data||[]).forEach(function(t){ if(!t.project_id)return; var s=projStats[t.project_id]=projStats[t.project_id]||{done:0,total:0}; s.total++; if(t.done)s.done++; });
   }
   function projById(id){return projects.filter(function(p){return p.id===id;})[0];}
-  function projTasks(pid){return tasks.filter(function(t){return t.project_id===pid;});}
-  function projProgress(pid){var ts=projTasks(pid);var done=ts.filter(function(t){return t.done;}).length;return {done:done,total:ts.length,pct:ts.length?Math.round(done/ts.length*100):0};}
+  function projTasks(pid){return projCache.filter(function(t){return t.project_id===pid;});}
+  async function openProject(pid){ state.listMode='project'; state.projectId=pid; busy=true; renderApp(); var r=await sb.from('mf_tasks').select('*').eq('project_id',pid).order('due',{ascending:true}); projCache=r.data||[]; busy=false; renderApp(); }
+  function projProgress(pid){ if(pid===state.projectId && projCache.length){ var ts=projCache.filter(function(t){return t.project_id===pid;}); if(ts.length){var d=ts.filter(function(t){return t.done;}).length; return {done:d,total:ts.length,pct:Math.round(d/ts.length*100)};} } var s=projStats[pid]; if(s) return {done:s.done,total:s.total,pct:s.total?Math.round(s.done/s.total*100):0}; return {done:0,total:0,pct:0}; }
   async function showSelf(){ readonly=false;viewUser=session.user.id;viewProfile=profile;busy=true;renderApp();await loadTasks(viewUser);busy=false;renderApp(); }
   async function showMissionary(uid,pr){ readonly=true;viewUser=uid;viewProfile=pr;state.listMode='day';state.date=todayStr();state.calMonth=todayStr();state.cat='all';busy=true;renderApp();await loadTasks(uid);busy=false;renderApp(); }
   async function showDirectorHome(){ viewUser=null;busy=true;renderDirectorHome();
     var pr=await sb.from('mf_profiles').select('*');
-    var tk=await sb.from('mf_tasks').select('user_id,due,done,project_id');
+    var tk=await sb.from('mf_tasks').select('user_id,assignee_id,due,done,project_id');
     var pj=await sb.from('mf_projects').select('*');
     dirData={profiles:pr.data||[],tasks:tk.data||[],projects:pj.data||[]};
     busy=false;renderDirectorHome(); }
 
   // ── CRUD ──
-  async function addTask(f){ var row={user_id:session.user.id,title:f.title,due:f.due||state.date,horizon:'today',category:f.category||'',area:f.area||'',priority:f.priority||'none',recur:f.recur||'none',project_id:f.project||null,done:false,carry:0}; var r=await sb.from('mf_tasks').insert(row).select().single(); if(r.data){tasks.push(r.data);renderApp();} else alert('저장 실패: '+(r.error&&r.error.message)); }
+  async function addTask(f){ var asg=f.assignee||session.user.id; var row={user_id:session.user.id,assignee_id:asg,title:f.title,due:f.due||state.date,horizon:'today',category:f.category||'',area:f.area||'',priority:f.priority||'none',recur:f.recur||'none',project_id:f.project||null,done:false,carry:0}; var r=await sb.from('mf_tasks').insert(row).select().single(); if(r.data){ if(asg===session.user.id)tasks.push(r.data); if(r.data.project_id&&r.data.project_id===state.projectId)projCache.push(r.data); renderApp();} else alert('저장 실패: '+(r.error&&r.error.message)); }
   async function addProject(f){ var row={owner_id:session.user.id,name:f.name,description:f.description||'',deadline:f.deadline||null,status:'active'}; var r=await sb.from('mf_projects').insert(row).select().single(); if(r.data){projects.unshift(r.data);renderApp();} else alert('프로젝트 저장 실패: '+(r.error&&r.error.message)); }
   async function updateProject(id,f){ var p=projById(id); if(p)for(var k in f)p[k]=f[k]; renderApp(); await sb.from('mf_projects').update(f).eq('id',id); }
   async function delProject(id){ projects=projects.filter(function(p){return p.id!==id;}); tasks.forEach(function(t){if(t.project_id===id)t.project_id=null;}); state.listMode='projects';state.projectId=null; renderApp(); await sb.from('mf_projects').delete().eq('id',id); }
-  async function updateTask(id,f){ var t=byId(id); if(t)for(var k in f)t[k]=f[k]; renderApp(); await sb.from('mf_tasks').update(f).eq('id',id); }
+  async function updateTask(id,f){ var t=byId(id); if(t)for(var k in f)t[k]=f[k]; if(f.assignee_id!==undefined){ tasks=tasks.filter(function(x){return x.assignee_id===session.user.id;}); if(t&&t.assignee_id===session.user.id&&!tasks.filter(function(x){return x.id===id;})[0])tasks.push(t); } renderApp(); await sb.from('mf_tasks').update(f).eq('id',id); }
   async function toggleTask(id){ var t=byId(id); if(!t)return; var nd=!t.done; t.done=nd; t.done_date=nd?todayStr():null;
-    if(nd&&t.recur!=='none'&&t.due){ var nx=t.recur==='daily'?addDaysS(t.due,1):t.recur==='weekly'?addDaysS(t.due,7):addMonthsS(t.due,1); var nr={user_id:session.user.id,title:t.title,due:nx,horizon:'today',category:t.category,area:t.area,priority:t.priority,recur:t.recur,project_id:t.project_id||null,done:false,carry:0}; var ir=await sb.from('mf_tasks').insert(nr).select().single(); if(ir.data)tasks.push(ir.data); }
+    if(nd&&t.recur!=='none'&&t.due){ var nx=t.recur==='daily'?addDaysS(t.due,1):t.recur==='weekly'?addDaysS(t.due,7):addMonthsS(t.due,1); var nr={user_id:session.user.id,assignee_id:t.assignee_id||session.user.id,title:t.title,due:nx,horizon:'today',category:t.category,area:t.area,priority:t.priority,recur:t.recur,project_id:t.project_id||null,done:false,carry:0}; var ir=await sb.from('mf_tasks').insert(nr).select().single(); if(ir.data)tasks.push(ir.data); }
     renderApp(); await sb.from('mf_tasks').update({done:nd,done_date:t.done_date}).eq('id',id); }
-  async function delTask(id){ tasks=tasks.filter(function(t){return t.id!==id;}); renderApp(); await sb.from('mf_tasks').delete().eq('id',id); }
+  async function delTask(id){ tasks=tasks.filter(function(t){return t.id!==id;}); projCache=projCache.filter(function(t){return t.id!==id;}); renderApp(); await sb.from('mf_tasks').delete().eq('id',id); }
+  async function addProjectTask(pid,title,assignee,due){ addTask({title:title,due:due||todayStr(),project:pid,assignee:assignee||session.user.id}); }
   async function seedCloud(){ var T=todayStr(); var uid=session.user.id;
     var prj=await sb.from('mf_projects').insert({owner_id:uid,name:'중간고사 준비',description:'출제 · 인쇄 · 채점까지',deadline:addDaysS(T,10),status:'active'}).select().single();
     var pid=prj.data?prj.data.id:null; if(prj.data)projects.unshift(prj.data);
     var S=[['1교시 영어 수업',T,'교육사역','수업관리','daily','important',false,null],['학생 상담 (이OO)',T,'교육사역','학생관리','none','none',false,null],['출석부 정리',T,'교육사역','교육행정','none','urgent',false,null],['조회 시간',T,'교육사역','학생관리','daily','none',true,null],
       ['성적 입력 (지난주분)',addDaysS(T,-1),'교육사역','교육행정','none','none',false,null],['교재 복사',addDaysS(T,-2),'교육사역','수업관리','none','none',false,null],
       ['학부모 상담',addDaysS(T,1),'교육사역','학생관리','none','important',false,null],['중간고사 문제 출제',addDaysS(T,2),'교육사역','학사일정','none','none',false,pid],['중간고사 인쇄 의뢰',addDaysS(T,4),'교육사역','교육행정','none','none',false,pid],['온택 수업 준비',addDaysS(T,3),'전략선교','온택','none','none',false,null]]
-      .map(function(a){return {user_id:uid,title:a[0],due:a[1],horizon:'today',category:a[2],area:a[3],recur:a[4],priority:a[5],done:a[6],done_date:a[6]?T:null,project_id:a[7],carry:0};});
+      .map(function(a){return {user_id:uid,assignee_id:uid,title:a[0],due:a[1],horizon:'today',category:a[2],area:a[3],recur:a[4],priority:a[5],done:a[6],done_date:a[6]?T:null,project_id:a[7],carry:0};});
     var r=await sb.from('mf_tasks').insert(S).select(); if(r.data){tasks=tasks.concat(r.data);renderApp();} else alert('예시 넣기 실패: '+(r.error&&r.error.message||'')); }
 
   // ── 로그인 ──
@@ -143,17 +152,18 @@
   function chips(t){var out=[];
     if(t.priority&&t.priority!=='none')out.push('<span class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium '+PRIORITIES[t.priority].chip+'">'+icon('flag','h-3 w-3')+PRIORITIES[t.priority].label+'</span>');
     if(t.recur&&t.recur!=='none')out.push('<span class="inline-flex items-center gap-1 rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-500">'+icon('repeat','h-3 w-3')+RECURS[t.recur]+'</span>');
+    if(t.assignee_id&&t.assignee_id!==myId())out.push('<span class="inline-flex items-center gap-1 rounded-md bg-violet-50 px-1.5 py-0.5 text-[11px] font-medium text-violet-600">'+icon('users','h-3 w-3')+esc(memberName(t.assignee_id))+'</span>');
     if(t.project_id){var pp=projById(t.project_id);if(pp)out.push('<span class="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-1.5 py-0.5 text-[11px] font-medium text-indigo-600">'+icon('folder','h-3 w-3')+esc(pp.name)+'</span>');}
     if(t.category)out.push('<span class="inline-flex items-center gap-1 rounded-md bg-brand-50 px-1.5 py-0.5 text-[11px] font-medium text-brand-600">'+icon('tag','h-3 w-3')+esc(t.category)+(t.area?' · '+esc(t.area):'')+'</span>');
     if(!out.length)return '';return '<div class="mt-1.5 flex flex-wrap items-center gap-1 pl-7">'+out.join('')+'</div>';}
-  function taskRow(t,opt){opt=opt||{};var od=!t.done&&t.due&&t.due<todayStr();
-    var drag=readonly?'':' draggable="true" data-drag-id="'+t.id+'"';
-    var box='<div'+drag+' class="group rounded-lg border '+(od?'border-red-200 bg-red-50/40':'border-slate-200 bg-white')+' px-2.5 py-2'+(readonly?'':' cursor-grab active:cursor-grabbing')+'"><div class="flex items-center gap-2">';
-    if(readonly)box+='<span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border '+(t.done?'border-emerald-500 bg-emerald-500 text-white':'border-slate-300 text-transparent')+'">'+icon('check','h-3.5 w-3.5')+'</span><span class="flex-1 text-sm '+(t.done?'text-slate-400 line-through':'text-slate-700')+'">'+esc(t.title)+'</span>';
+  function taskRow(t,opt){opt=opt||{};var od=!t.done&&t.due&&t.due<todayStr();var ed=canEditTask(t);
+    var drag=ed?' draggable="true" data-drag-id="'+t.id+'"':'';
+    var box='<div'+drag+' class="group rounded-lg border '+(od?'border-red-200 bg-red-50/40':'border-slate-200 bg-white')+' px-2.5 py-2'+(ed?' cursor-grab active:cursor-grabbing':'')+'"><div class="flex items-center gap-2">';
+    if(!ed)box+='<span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border '+(t.done?'border-emerald-500 bg-emerald-500 text-white':'border-slate-300 text-transparent')+'">'+icon('check','h-3.5 w-3.5')+'</span><span class="flex-1 text-sm '+(t.done?'text-slate-400 line-through':'text-slate-700')+'">'+esc(t.title)+'</span>';
     else box+='<button data-act="toggle" data-id="'+t.id+'" class="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition '+(t.done?'border-emerald-500 bg-emerald-500 text-white':'border-slate-300 text-transparent hover:border-brand-400')+'">'+icon('check','h-3.5 w-3.5')+'</button><button data-act="edit" data-id="'+t.id+'" class="flex-1 text-left text-sm '+(t.done?'text-slate-400 line-through':'text-slate-700')+'">'+esc(t.title)+'</button>';
     if(opt.showDate)box+='<span class="shrink-0 text-[11px] '+(od?'font-semibold text-red-500':'text-slate-400')+'">'+mm(t.due)+'/'+dd(t.due)+'('+wd(t.due)+')</span>';
-    if(!readonly&&opt.pull)box+='<button data-act="pull" data-id="'+t.id+'" title="오늘로 가져오기" class="shrink-0 rounded p-1 text-slate-300 hover:bg-brand-50 hover:text-brand-500">'+icon('pull','h-4 w-4')+'</button>';
-    if(!readonly)box+='<button data-act="del" data-id="'+t.id+'" class="shrink-0 rounded p-1 text-slate-300 hover:bg-red-50 hover:text-red-500 sm:opacity-0 sm:group-hover:opacity-100">'+icon('trash')+'</button>';
+    if(ed&&opt.pull)box+='<button data-act="pull" data-id="'+t.id+'" title="오늘로 가져오기" class="shrink-0 rounded p-1 text-slate-300 hover:bg-brand-50 hover:text-brand-500">'+icon('pull','h-4 w-4')+'</button>';
+    if(ed)box+='<button data-act="del" data-id="'+t.id+'" class="shrink-0 rounded p-1 text-slate-300 hover:bg-red-50 hover:text-red-500 sm:opacity-0 sm:group-hover:opacity-100">'+icon('trash')+'</button>';
     return box+'</div>'+chips(t)+'</div>';}
 
   // ── 렌더 ──
@@ -236,7 +246,11 @@
     html+='<div class="mb-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div class="flex items-start justify-between gap-3"><div class="min-w-0"><h1 class="text-xl font-bold">'+esc(p.name)+'</h1>'+(p.description?'<p class="mt-1 whitespace-pre-wrap text-sm text-slate-500">'+esc(p.description)+'</p>':'')+'</div>'+(!readonly?'<button data-act="editproj" data-pid="'+p.id+'" class="shrink-0 rounded-lg px-2 py-1.5 text-sm text-slate-400 hover:bg-slate-100 hover:text-slate-700">수정</button>':'')+'</div>'+
       '<div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs"><span class="flex items-center gap-1 text-slate-500">'+icon('month','h-3.5 w-3.5')+(p.deadline?esc(p.deadline):'마감 없음')+'</span>'+(dl?'<span class="font-semibold '+dl.cls+'">'+dl.label+'</span>':'')+'</div>'+
       '<div class="mt-3"><div class="mb-1 flex items-center justify-between text-xs text-slate-500"><span>진행률</span><span class="font-medium text-slate-700">'+pr.done+'/'+pr.total+' · '+pr.pct+'%</span></div><div class="h-2.5 w-full overflow-hidden rounded-full bg-slate-100"><div class="h-full rounded-full bg-brand-500" style="width:'+pr.pct+'%"></div></div></div></div>';
-    if(!readonly) html+='<form id="projadd" data-pid="'+p.id+'" class="mb-3 flex items-center gap-2"><div class="relative flex-1">'+icon('plus','h-4 w-4 text-slate-400 pointer-events-none absolute left-3 top-1/2 -translate-y-1/2')+'<input name="q" placeholder="이 프로젝트에 할 일 추가 (오늘 날짜로)..." class="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100" /></div></form>';
+    if(!readonly) html+='<form id="projadd" data-pid="'+p.id+'" class="mb-3 rounded-xl border border-slate-200 bg-white p-2"><div class="flex flex-col gap-2 sm:flex-row sm:items-center">'+
+      '<input name="q" placeholder="할 일 추가..." class="min-w-0 flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100" />'+
+      '<div class="flex items-center gap-2"><label class="text-[11px] text-slate-400">담당</label><select name="assignee" class="rounded-lg border border-slate-200 px-2 py-2 text-sm text-slate-600 outline-none focus:border-brand-400">'+memberOptions(myId())+'</select>'+
+      '<label class="text-[11px] text-slate-400">마감</label><input name="due" type="date" value="'+todayStr()+'" class="rounded-lg border border-slate-200 px-2 py-2 text-sm text-slate-600 outline-none focus:border-brand-400" />'+
+      '<button type="submit" class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-600 text-white hover:bg-brand-700">'+icon('plus','h-4 w-4')+'</button></div></div></form>';
     html+=ts.length?'<div class="space-y-2">'+ts.map(function(t){return taskRow(t,{showDate:true});}).join('')+'</div>':'<div class="rounded-2xl border border-dashed border-slate-300 bg-white py-12 text-center text-sm text-slate-400">아직 할 일이 없어요. 위에 추가해보세요.</div>';
     return html;
   }
@@ -291,7 +305,7 @@
     var body='<main class="mx-auto max-w-6xl px-4 py-6 md:px-8">';
     if(!dirData){ app.innerHTML=head+body+'<p class="py-16 text-center text-sm text-slate-400">불러오는 중...</p></main>'; return; }
     var T=todayStr();
-    var byU={}; dirData.tasks.forEach(function(t){(byU[t.user_id]=byU[t.user_id]||[]).push(t);});
+    var byU={}; dirData.tasks.forEach(function(t){var k=t.assignee_id||t.user_id;(byU[k]=byU[k]||[]).push(t);});
     var ms=dirData.profiles.filter(function(p){return p.role!=='director'||byU[p.id];});
     // 선교사별 상태 계산
     var rows=ms.map(function(p){ var ts=byU[p.id]||[];
@@ -347,7 +361,7 @@
 
   // ── 모달 ──
   function openTaskModal(id){
-    var t=id?byId(id):{id:'',title:'',due:state.date,category:(state.cat!=='all'?state.cat:''),area:'',priority:'none',recur:'none',project_id:(state.listMode==='project'?state.projectId:null)};
+    var t=id?byId(id):{id:'',title:'',due:state.date,category:(state.cat!=='all'?state.cat:''),area:'',priority:'none',recur:'none',project_id:(state.listMode==='project'?state.projectId:null),assignee_id:myId()};
     if(id&&!t)return; var isNew=!id; var root=document.getElementById('modal-root');
     root.innerHTML='<div data-act="mbg" class="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 sm:items-center sm:p-4"><div data-stop="1" class="w-full max-w-md rounded-t-2xl bg-white p-6 shadow-xl sm:rounded-2xl">'+
       '<div class="mb-4 flex items-center justify-between"><h2 class="text-lg font-bold">'+(isNew?'새 할 일':'할 일')+'</h2><button data-act="mclose" class="rounded-lg p-1 text-slate-400 hover:bg-slate-100">✕</button></div>'+
@@ -359,10 +373,11 @@
         '<div><label class="mb-1.5 block text-sm font-medium text-slate-700">세부영역</label><input name="area" maxlength="24" value="'+esc(t.area)+'" placeholder="예) 수업관리" class="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-brand-500" /></div></div>'+
         '<div class="grid grid-cols-2 gap-3"><div><label class="mb-1.5 block text-sm font-medium text-slate-700">우선순위</label><select name="priority" class="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-brand-500"><option value="none"'+(t.priority==='none'?' selected':'')+'>보통</option><option value="important"'+(t.priority==='important'?' selected':'')+'>중요</option><option value="urgent"'+(t.priority==='urgent'?' selected':'')+'>급함</option></select></div>'+
         '<div><label class="mb-1.5 block text-sm font-medium text-slate-700">프로젝트</label><select name="project" class="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-brand-500"><option value=""'+(!t.project_id?' selected':'')+'>없음</option>'+projects.map(function(pp){return '<option value="'+pp.id+'"'+(t.project_id===pp.id?' selected':'')+'>'+esc(pp.name)+'</option>';}).join('')+'</select></div></div>'+
+        '<div><label class="mb-1.5 block text-sm font-medium text-slate-700">담당자</label><select name="assignee" class="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-brand-500">'+memberOptions(t.assignee_id||myId())+'</select></div>'+
         '<div class="flex gap-2 pt-1">'+(isNew?'':'<button type="button" data-act="del-modal" data-id="'+t.id+'" class="rounded-lg border border-red-200 px-3 py-2.5 text-sm font-medium text-red-500 hover:bg-red-50">삭제</button>')+'<button type="submit" class="flex-1 rounded-lg bg-brand-600 py-2.5 text-sm font-semibold text-white hover:bg-brand-700">'+(isNew?'추가':'저장')+'</button></div>'+
       '</form></div></div>';
     var i=root.querySelector('input[name=title]');if(i)i.focus();
-    root.querySelector('#task-form').addEventListener('submit',function(e){e.preventDefault();var f=e.target;var title=f.title.value.trim();if(!title)return;var payload={title:title,due:f.due.value||state.date,category:f.category.value.trim(),area:f.area.value.trim(),priority:f.priority.value,recur:f.recur.value,project_id:(f.project.value||null)};if(isNew){payload.project=payload.project_id;addTask(payload);}else updateTask(t.id,{title:payload.title,due:payload.due,category:payload.category,area:payload.area,priority:payload.priority,recur:payload.recur,project_id:payload.project_id});closeModal();});
+    root.querySelector('#task-form').addEventListener('submit',function(e){e.preventDefault();var f=e.target;var title=f.title.value.trim();if(!title)return;var asg=(f.assignee&&f.assignee.value)||myId();var payload={title:title,due:f.due.value||state.date,category:f.category.value.trim(),area:f.area.value.trim(),priority:f.priority.value,recur:f.recur.value,project_id:(f.project.value||null)};if(isNew){payload.project=payload.project_id;payload.assignee=asg;addTask(payload);}else{updateTask(t.id,{title:payload.title,due:payload.due,category:payload.category,area:payload.area,priority:payload.priority,recur:payload.recur,project_id:payload.project_id,assignee_id:asg});}closeModal();});
   }
   function closeModal(){document.getElementById('modal-root').innerHTML='';}
   function openProjectModal(id){
@@ -388,7 +403,7 @@
     else if(act==='todaysel'){state.date=todayStr();state.calMonth=todayStr();state.listMode='day';renderApp();}
     else if(act==='overdue'){state.listMode='overdue';renderApp();}
     else if(act==='projects'){state.listMode='projects';state.projectId=null;renderApp();}
-    else if(act==='openproj'){state.listMode='project';state.projectId=el.getAttribute('data-pid');renderApp();}
+    else if(act==='openproj'){openProject(el.getAttribute('data-pid'));}
     else if(act==='projback'){state.listMode='projects';state.projectId=null;renderApp();}
     else if(act==='newproj'){openProjectModal(null);}
     else if(act==='editproj'){openProjectModal(el.getAttribute('data-pid'));}
@@ -410,7 +425,7 @@
   });
   document.addEventListener('submit',function(e){
     var qa=e.target.closest('#quickadd');if(qa){e.preventDefault();var v=qa.q.value.trim();if(!v)return;addTask({title:v,due:state.date});qa.q.value='';return;}
-    var pa=e.target.closest('#projadd');if(pa){e.preventDefault();var pv=pa.q.value.trim();if(!pv)return;addTask({title:pv,due:todayStr(),project:pa.getAttribute('data-pid')});pa.q.value='';}
+    var pa=e.target.closest('#projadd');if(pa){e.preventDefault();var pv=pa.q.value.trim();if(!pv)return;addTask({title:pv,due:(pa.due&&pa.due.value)||todayStr(),project:pa.getAttribute('data-pid'),assignee:(pa.assignee&&pa.assignee.value)||myId()});pa.q.value='';}
   });
 
   // 드래그 앤 드롭: 할일을 캘린더 날짜로 옮기기
