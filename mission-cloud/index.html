@@ -30,7 +30,7 @@
   var WD=['일','월','화','수','목','금','토'];
 
   var session=null, profile=null, tasks=[];
-  var state={ mode:'day', date:'', cat:'all' };
+  var state={ date:'', cat:'all', listMode:'day', calMonth:'' };
   var viewUser=null, viewProfile=null, readonly=false, dirData=null, busy=false;
 
   // ── 날짜 ──
@@ -67,12 +67,12 @@
   // ── 부팅 ──
   sb.auth.onAuthStateChange(function(_e,s){session=s;if(!s){profile=null;viewUser=null;}route();});
   sb.auth.getSession().then(function(r){session=r.data.session;route();});
-  function route(){ state.date=state.date||todayStr(); if(!session){renderLogin();return;} ensureProfile().then(function(){ if(profile.role==='director'&&viewUser===null) showDirectorHome(); else showSelf(); }); }
+  function route(){ state.date=state.date||todayStr(); state.calMonth=state.calMonth||todayStr(); if(!session){renderLogin();return;} ensureProfile().then(function(){ if(profile.role==='director'&&viewUser===null) showDirectorHome(); else showSelf(); }); }
   async function ensureProfile(){ var r=await sb.from('mf_profiles').select('*').eq('id',session.user.id).maybeSingle(); if(r.data){profile=r.data;return;} var name=(session.user.email||'').split('@')[0]; var ins=await sb.from('mf_profiles').insert({id:session.user.id,name:name,branch:'',role:'missionary'}).select().single(); profile=ins.data||{id:session.user.id,name:name,role:'missionary'}; }
 
   async function loadTasks(uid){ var r=await sb.from('mf_tasks').select('*').eq('user_id',uid).order('due',{ascending:true}); tasks=r.data||[]; }
   async function showSelf(){ readonly=false;viewUser=session.user.id;viewProfile=profile;busy=true;renderApp();await loadTasks(viewUser);busy=false;renderApp(); }
-  async function showMissionary(uid,pr){ readonly=true;viewUser=uid;viewProfile=pr;state.mode='day';state.date=todayStr();state.cat='all';busy=true;renderApp();await loadTasks(uid);busy=false;renderApp(); }
+  async function showMissionary(uid,pr){ readonly=true;viewUser=uid;viewProfile=pr;state.listMode='day';state.date=todayStr();state.calMonth=todayStr();state.cat='all';busy=true;renderApp();await loadTasks(uid);busy=false;renderApp(); }
   async function showDirectorHome(){ viewUser=null;busy=true;renderDirectorHome();var pr=await sb.from('mf_profiles').select('*');var tk=await sb.from('mf_tasks').select('user_id,due,done');dirData={profiles:pr.data||[],tasks:tk.data||[]};busy=false;renderDirectorHome(); }
 
   // ── CRUD ──
@@ -111,9 +111,10 @@
     var head='<div class="px-3 py-3"><div class="flex items-center gap-2"><span class="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600 text-white">'+icon('month','h-5 w-5')+'</span><span class="text-base font-bold">IM Flow</span></div>'+
       '<div class="mt-2 flex items-center justify-between rounded-lg bg-slate-50 px-2 py-1.5 text-xs"><span class="truncate text-slate-600">'+(readonly?'👁 '+who+' (열람)':'👤 '+who)+'</span>'+
       (profile&&profile.role==='director'?'<button data-act="dirhome" class="ml-2 shrink-0 font-semibold text-brand-600">디렉터</button>':'<button data-act="logout" class="ml-2 shrink-0 text-slate-400 hover:text-red-500">'+icon('logout','h-3.5 w-3.5')+'</button>')+'</div></div>';
-    function mi(mode,label,ic,badge){var a=state.mode===mode;return '<button data-act="mode" data-mode="'+mode+'" class="flex items-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition md:w-full '+(a?'bg-brand-600 text-white':'text-slate-600 hover:bg-slate-100')+'">'+icon(ic,'h-4 w-4 shrink-0')+'<span>'+label+'</span>'+(badge?'<span class="ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-bold '+(a?'bg-white/25 text-white':'bg-red-100 text-red-600')+'">'+badge+'</span>':'')+'</button>';}
     var over=overdueList().length;
-    var modes=mi('day','일','day')+mi('week','주','week')+mi('month','월','month')+mi('overdue','밀린 일','alert',over||'');
+    function nav(act,label,ic,active,badge){return '<button data-act="'+act+'" class="flex items-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition md:w-full '+(active?'bg-brand-600 text-white':'text-slate-600 hover:bg-slate-100')+'">'+icon(ic,'h-4 w-4 shrink-0')+'<span>'+label+'</span>'+(badge?'<span class="ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-bold '+(active?'bg-white/25 text-white':'bg-red-100 text-red-600')+'">'+badge+'</span>':'')+'</button>';}
+    var isToday=state.listMode==='day'&&state.date===todayStr();
+    var modes=nav('todaysel','오늘','day',isToday)+nav('overdue','밀린 일','alert',state.listMode==='overdue',over||'');
     var cs=cats();
     function ci(cat,label){var a=state.cat===cat;return '<button data-act="cat" data-cat="'+esc(cat)+'" class="flex items-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm transition md:w-full '+(a?'bg-slate-800 text-white':'text-slate-500 hover:bg-slate-100')+'">'+(cat==='all'?'':icon('tag','h-3.5 w-3.5'))+'<span>'+esc(label)+'</span></button>';}
     var catNav=cs.length?'<div class="hidden px-3 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400 md:block">업무</div>'+ci('all','전체')+cs.map(function(c){return ci(c,c);}).join(''):'';
@@ -152,10 +153,44 @@
       if(readonly)return '<div class="rounded-2xl border border-dashed border-slate-300 bg-white py-16 text-center text-sm text-slate-400">이 선교사는 아직 등록한 할일이 없어요.</div>';
       return '<div class="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white py-16 text-center"><span class="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-50 text-brand-500">'+icon('month','h-7 w-7')+'</span><h3 class="text-base font-semibold">아직 할 일이 없어요</h3><p class="mt-1 mb-5 max-w-xs text-sm text-slate-500">날짜별로 저장돼서 지난 날도 다 남아요. 할 일을 추가해보세요.</p><div class="flex gap-2"><button data-act="newfull" class="rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700">새 할일</button><button data-act="seed" class="rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50">예시 넣기</button></div></div>';
     }
-    if(state.mode==='overdue')return overdueView();
-    if(state.mode==='week')return weekView();
-    if(state.mode==='month')return monthView();
-    return dayView();
+    return '<div class="md:flex md:gap-6"><div class="mb-4 md:mb-0 md:w-[300px] md:shrink-0">'+calendarWidget()+'</div><div class="min-w-0 flex-1">'+(state.listMode==='overdue'?overdueHtml():dayListHtml())+'</div></div>';
+  }
+
+  // 고정 미니 캘린더 (날짜 선택용)
+  function calendarWidget(){
+    var mtx=monthMatrix(state.calMonth);
+    var html='<div class="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">'+
+      '<div class="mb-1 flex items-center justify-between px-1"><button data-act="prev" class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100">'+icon('left','h-4 w-4')+'</button>'+
+      '<span class="text-sm font-bold">'+mtx.y+'년 '+(mtx.m+1)+'월</span>'+
+      '<button data-act="next" class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100">'+icon('right','h-4 w-4')+'</button></div>'+
+      '<div class="grid grid-cols-7 text-center">'+WD.map(function(w,i){return '<div class="py-1 text-[10px] font-semibold '+(i===0?'text-red-400':'text-slate-400')+'">'+w+'</div>';}).join('')+'</div>'+
+      '<div class="grid grid-cols-7 gap-0.5">';
+    mtx.weeks.forEach(function(row){ row.forEach(function(s){
+      var items=onDate(s), open=items.filter(function(t){return !t.done;}).length, od=items.some(function(t){return !t.done&&s<todayStr();});
+      var cur=new Date(s+'T00:00:00').getMonth()===mtx.m, sel=(s===state.date&&state.listMode==='day'), isT=(s===todayStr());
+      var cls=sel?'bg-brand-600 text-white':isT?'bg-brand-50 font-bold text-brand-700':cur?'text-slate-700 hover:bg-slate-100':'text-slate-300 hover:bg-slate-50';
+      var dot=items.length?'<span class="mx-auto mt-0.5 block h-1 w-1 rounded-full '+(sel?'bg-white':od?'bg-red-500':open?'bg-brand-500':'bg-slate-300')+'"></span>':'<span class="mt-0.5 block h-1"></span>';
+      html+='<button data-act="goday" data-date="'+s+'" class="rounded-lg py-1 text-xs '+cls+'"><span>'+dd(s)+'</span>'+dot+'</button>';
+    }); });
+    html+='</div><button data-act="todaysel" class="mt-2 w-full rounded-lg bg-slate-100 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200">오늘로</button></div>';
+    return html;
+  }
+
+  // 선택한 날짜의 할일 목록
+  function dayListHtml(){
+    var d=state.date, items=onDate(d), open=items.filter(function(t){return !t.done;}).length;
+    var html='<div class="mb-3 flex items-center justify-between gap-2"><h2 class="text-lg font-bold">'+esc(fmtKDay(d))+'</h2>'+(!readonly?'<button data-act="newfull" class="flex shrink-0 items-center gap-1 rounded-lg bg-brand-600 px-3 py-2 text-sm font-semibold text-white hover:bg-brand-700">'+icon('plus','h-4 w-4')+'<span class="hidden sm:inline">새 할일</span></button>':'')+'</div>';
+    if(d===todayStr()){ var ov=overdueList(); if(ov.length) html+='<button data-act="overdue" class="mb-3 flex w-full items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-left text-sm font-medium text-red-700 hover:bg-red-100">'+icon('alert','h-4 w-4')+'지난 못한 일 '+ov.length+'개 · 눌러서 정리 →</button>'; }
+    html+='<p class="mb-2 text-sm text-slate-500">'+open+'개 남음 · '+(items.length-open)+'개 완료</p>';
+    if(!readonly) html+='<form id="quickadd" class="mb-3 flex items-center gap-2"><div class="relative flex-1">'+icon('plus','h-4 w-4 text-slate-400 pointer-events-none absolute left-3 top-1/2 -translate-y-1/2')+'<input name="q" placeholder="이 날짜에 할 일 추가..." class="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100" /></div></form>';
+    html+=items.length?'<div class="space-y-2">'+items.map(function(t){return taskRow(t,{});}).join('')+'</div>':'<div class="rounded-2xl border border-dashed border-slate-300 bg-white py-12 text-center text-sm text-slate-400">이 날은 할 일이 없어요.</div>';
+    return html;
+  }
+  function overdueHtml(){
+    var ov=overdueList();
+    var html='<div class="mb-3 flex items-center gap-2"><h2 class="flex items-center gap-1.5 text-lg font-bold text-red-600">'+icon('alert','h-5 w-5')+'밀린 일</h2><span class="text-sm text-slate-400">'+ov.length+'개</span></div>';
+    html+=ov.length?'<div class="space-y-2">'+ov.map(function(t){return taskRow(t,{showDate:true,pull:true});}).join('')+'</div>':'<div class="rounded-2xl border border-dashed border-slate-300 bg-white py-16 text-center text-sm text-slate-400">밀린 일이 없어요. 좋아요! 👍</div>';
+    return html;
   }
 
   function dayView(){
@@ -242,11 +277,11 @@
   // ── 이벤트 ──
   document.addEventListener('click',function(e){
     var el=e.target.closest('[data-act]');if(!el)return;var act=el.getAttribute('data-act');
-    if(act==='mode'){state.mode=el.getAttribute('data-mode');renderApp();}
-    else if(act==='cat'){state.cat=el.getAttribute('data-cat');renderApp();}
-    else if(act==='prev'||act==='next'){var s=act==='next'?1:-1;if(state.mode==='day')state.date=addDaysS(state.date,s);else if(state.mode==='week')state.date=addDaysS(state.date,7*s);else if(state.mode==='month')state.date=addMonthsS(state.date,s);renderApp();}
-    else if(act==='today'){state.date=todayStr();renderApp();}
-    else if(act==='goday'){state.date=el.getAttribute('data-date');state.mode='day';renderApp();}
+    if(act==='cat'){state.cat=el.getAttribute('data-cat');renderApp();}
+    else if(act==='prev'||act==='next'){state.calMonth=addMonthsS(state.calMonth,act==='next'?1:-1);renderApp();}
+    else if(act==='todaysel'){state.date=todayStr();state.calMonth=todayStr();state.listMode='day';renderApp();}
+    else if(act==='overdue'){state.listMode='overdue';renderApp();}
+    else if(act==='goday'){state.date=el.getAttribute('data-date');state.calMonth=el.getAttribute('data-date');state.listMode='day';renderApp();}
     else if(act==='newfull'){openTaskModal(null);}
     else if(act==='edit'){openTaskModal(el.getAttribute('data-id'));}
     else if(act==='toggle'){toggleTask(el.getAttribute('data-id'));}
