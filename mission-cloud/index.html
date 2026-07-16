@@ -137,7 +137,7 @@
     return box+'</div>'+chips(t)+'</div>';}
 
   // ── 렌더 ──
-  function renderApp(){ document.getElementById('app').innerHTML='<div class="md:flex md:min-h-screen">'+sidebar()+'<main class="min-w-0 flex-1 bg-slate-50"><div class="mx-auto max-w-3xl px-4 py-5 md:px-8 md:py-6">'+content()+'</div></main></div>'; }
+  function renderApp(){ document.getElementById('app').innerHTML='<div class="md:flex md:min-h-screen">'+sidebar()+'<main class="min-w-0 flex-1 bg-slate-50"><div class="mx-auto max-w-6xl px-4 py-5 md:px-8 md:py-6">'+content()+'</div></main></div>'; }
 
   function navHeader(label, showToday){
     return '<div class="mb-4 flex items-center gap-2">'+
@@ -153,7 +153,7 @@
       if(readonly)return '<div class="rounded-2xl border border-dashed border-slate-300 bg-white py-16 text-center text-sm text-slate-400">이 선교사는 아직 등록한 할일이 없어요.</div>';
       return '<div class="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white py-16 text-center"><span class="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-50 text-brand-500">'+icon('month','h-7 w-7')+'</span><h3 class="text-base font-semibold">아직 할 일이 없어요</h3><p class="mt-1 mb-5 max-w-xs text-sm text-slate-500">날짜별로 저장돼서 지난 날도 다 남아요. 할 일을 추가해보세요.</p><div class="flex gap-2"><button data-act="newfull" class="rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700">새 할일</button><button data-act="seed" class="rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50">예시 넣기</button></div></div>';
     }
-    return '<div class="md:flex md:gap-6"><div class="mb-4 md:mb-0 md:w-[300px] md:shrink-0">'+calendarWidget()+'</div><div class="min-w-0 flex-1">'+(state.listMode==='overdue'?overdueHtml():dayListHtml())+'</div></div>';
+    return '<div class="md:flex md:gap-8"><div class="mb-4 md:mb-0 md:w-[360px] md:shrink-0">'+calendarWidget()+'</div><div class="min-w-0 flex-1">'+(state.listMode==='overdue'?overdueHtml():dayListHtml())+'</div></div>';
   }
 
   // 고정 미니 캘린더 (날짜 선택용)
@@ -170,7 +170,7 @@
       var cur=new Date(s+'T00:00:00').getMonth()===mtx.m, sel=(s===state.date&&state.listMode==='day'), isT=(s===todayStr());
       var cls=sel?'bg-brand-600 text-white':isT?'bg-brand-50 font-bold text-brand-700':cur?'text-slate-700 hover:bg-slate-100':'text-slate-300 hover:bg-slate-50';
       var dot=items.length?'<span class="mx-auto mt-0.5 block h-1 w-1 rounded-full '+(sel?'bg-white':od?'bg-red-500':open?'bg-brand-500':'bg-slate-300')+'"></span>':'<span class="mt-0.5 block h-1"></span>';
-      html+='<button data-act="goday" data-date="'+s+'" class="rounded-lg py-1 text-xs '+cls+'"><span>'+dd(s)+'</span>'+dot+'</button>';
+      html+='<button data-act="goday" data-date="'+s+'" class="rounded-lg py-2 text-[13px] '+cls+'"><span>'+dd(s)+'</span>'+dot+'</button>';
     }); });
     html+='</div><button data-act="todaysel" class="mt-2 w-full rounded-lg bg-slate-100 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200">오늘로</button></div>';
     return html;
